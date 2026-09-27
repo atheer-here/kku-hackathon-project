@@ -22,6 +22,17 @@ sourceFiles.forEach((file) => {
   const text = fs.readFileSync(path.join(root, file), "utf8");
   if (/https?:\/\//i.test(text)) throw new Error(`Remote URL found in shipped file: ${file}`);
 });
+const stylesheet = fs.readFileSync(path.join(root, "css/styles.css"), "utf8");
+if (!stylesheet.includes("--bg:") || !stylesheet.includes('html[data-theme="dark"]')) {
+  throw new Error("Theme token layers are missing from the stylesheet.");
+}
+if (!html.includes("vision-sector-theme") || !html.includes("color-scheme")) {
+  throw new Error("Pre-paint theme bootstrap is missing from index.html.");
+}
+const appScript = fs.readFileSync(path.join(root, "js/app.js"), "utf8");
+if (!appScript.includes("theme-toggle") || !appScript.includes("aria-pressed")) {
+  throw new Error("Accessible theme toggle is missing from app.js.");
+}
 ["data/sectors.js", "data/questions.js", "js/quiz-engine.js", "js/download-card.js", "js/app.js"].forEach((file) => {
   const check = spawnSync(process.execPath, ["--check", path.join(root, file)], { encoding: "utf8" });
   if (check.status !== 0) throw new Error(`Syntax error in ${file}: ${check.stderr}`);

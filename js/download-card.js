@@ -1,10 +1,25 @@
 (function () {
-  const icons = {
-    compass: ["M", 90, 44, "m0 0 16 16 -16 16 -16 -16 16 -16", "M", 90, 60, "l8 8"],
-    spark: ["M", 90, 43, "l7 17 17 7 -17 7 -7 17 -7 -17 -17 -7 17 -7z"],
-    heart: ["M", 90, 50, "c-14-17-37 5 0 31 37-26 14-48 0-31z"],
-    chart: ["M", 68, 80, "v-16 h10 v16z M", 85, 80, "v-29 h10 v29z M", 102, 80, "v-42 h10 v42z"],
-    star: ["M", 90, 42, "l7 17 18 1 -14 12 5 18 -16-10 -16 10 5-18 -14-12 18-1z"]
+  const exportPalettes = {
+    light: {
+      background: "#f5f1e8",
+      card: "#ffffff",
+      text: "#26332f",
+      muted: "#56645e",
+      divider: "#d5dfd7",
+      shadow: "rgba(0, 75, 50, .16)",
+      teal: "#00a6a6",
+      gold: "#d7a84b"
+    },
+    dark: {
+      background: "#132923",
+      card: "#203c33",
+      text: "#f8f4e9",
+      muted: "#c1d0c8",
+      divider: "#456457",
+      shadow: "rgba(0, 0, 0, .36)",
+      teal: "#32c5c2",
+      gold: "#e5bc68"
+    }
   };
 
   function drawIcon(context, icon, color) {
@@ -14,7 +29,6 @@
     context.lineJoin = "round";
     context.lineCap = "round";
     context.beginPath();
-    const commands = icons[icon];
     if (icon === "compass") {
       context.moveTo(90, 44); context.lineTo(106, 60); context.lineTo(90, 76); context.lineTo(74, 60); context.closePath();
       context.moveTo(90, 60); context.lineTo(98, 68);
@@ -31,24 +45,44 @@
     context.restore();
   }
 
+  function drawConnection(context, palette) {
+    context.save();
+    context.strokeStyle = palette.teal;
+    context.globalAlpha = .28;
+    context.lineWidth = 3;
+    context.beginPath();
+    context.moveTo(1120, 55); context.bezierCurveTo(1310, 115, 1250, 225, 1450, 185); context.stroke();
+    context.beginPath();
+    context.strokeStyle = palette.gold;
+    context.moveTo(70, 820); context.bezierCurveTo(230, 685, 300, 920, 520, 830); context.stroke();
+    [[1250, 166, palette.teal], [390, 850, palette.gold]].forEach(([x, y, color]) => {
+      context.strokeStyle = color; context.fillStyle = palette.card; context.globalAlpha = .65;
+      context.beginPath(); context.arc(x, y, 18, 0, Math.PI * 2); context.stroke();
+      context.globalAlpha = 1; context.beginPath(); context.arc(x, y, 7, 0, Math.PI * 2); context.fill();
+    });
+    context.restore();
+  }
+
   function downloadResultCard(result) {
     const { winner, topScore } = result;
+    const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    const palette = exportPalettes[theme];
     const canvas = document.createElement("canvas");
     canvas.width = 1500;
     canvas.height = 960;
     const context = canvas.getContext("2d");
-    const primary = "#10283f";
 
-    context.fillStyle = "#f7fbf7";
+    context.fillStyle = palette.background;
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = winner.color;
-    context.globalAlpha = 0.13;
+    context.globalAlpha = .12;
     context.beginPath(); context.arc(1300, 40, 360, 0, Math.PI * 2); context.fill();
     context.beginPath(); context.arc(120, 860, 250, 0, Math.PI * 2); context.fill();
     context.globalAlpha = 1;
+    drawConnection(context, palette);
 
-    context.fillStyle = "#ffffff";
-    context.shadowColor = "rgba(16, 40, 63, .14)";
+    context.fillStyle = palette.card;
+    context.shadowColor = palette.shadow;
     context.shadowBlur = 42;
     context.shadowOffsetY = 18;
     context.beginPath(); context.roundRect(100, 90, 1300, 780, 36); context.fill();
@@ -56,10 +90,10 @@
 
     context.fillStyle = winner.color;
     context.fillRect(100, 90, 22, 780);
-    context.fillStyle = "#597080";
+    context.fillStyle = palette.muted;
     context.font = "700 28px system-ui, sans-serif";
-    context.fillText("VISION 2030 SECTOR QUIZ", 170, 170);
-    context.fillStyle = primary;
+    context.fillText("SECTOR EXPLORER", 170, 170);
+    context.fillStyle = palette.text;
     context.font = "700 55px system-ui, sans-serif";
     context.fillText("Your best match", 170, 250);
     context.fillStyle = winner.color;
@@ -67,22 +101,22 @@
     context.fillText(winner.name, 170, 360);
     drawIcon(context, winner.icon, winner.color);
 
-    context.fillStyle = "#eaf0f2";
+    context.fillStyle = palette.divider;
     context.fillRect(170, 420, 1050, 2);
-    context.fillStyle = "#597080";
+    context.fillStyle = palette.muted;
     context.font = "700 28px system-ui, sans-serif";
     context.fillText(`Illustrative score: ${topScore} points`, 170, 490);
-    context.fillStyle = primary;
+    context.fillStyle = palette.text;
     context.font = "700 36px system-ui, sans-serif";
     context.fillText("Example career directions", 170, 580);
     context.font = "500 34px system-ui, sans-serif";
     winner.jobs.forEach((job, index) => {
       context.fillStyle = winner.color;
       context.beginPath(); context.arc(184, 640 + index * 72, 8, 0, Math.PI * 2); context.fill();
-      context.fillStyle = primary;
+      context.fillStyle = palette.text;
       context.fillText(job, 212, 652 + index * 72);
     });
-    context.fillStyle = "#597080";
+    context.fillStyle = palette.muted;
     context.font = "500 24px system-ui, sans-serif";
     context.fillText("Example content only — not official guidance or career advice.", 170, 803);
 

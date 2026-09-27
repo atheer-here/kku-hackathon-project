@@ -2,6 +2,7 @@
   const app = document.getElementById("app");
   const liveStatus = document.getElementById("live-status");
   const state = { view: "welcome", questionIndex: 0, answers: {}, result: null };
+  const themeStorageKey = "vision-sector-theme";
   const sectorIcons = {
     compass: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 7 13 13-13 14L11 20 24 7Z"/><path d="m24 20 6 6"/></svg>',
     spark: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 5 4 14 14 5-14 5-4 14-5-14-14-5 14-5 5-14Z"/></svg>',
@@ -9,6 +10,8 @@
     chart: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 39V26h9v13M20 39V15h9v24M32 39V7h9v32"/></svg>',
     star: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 6 5 12 13 1-10 9 3 14-11-7-11 7 3-14-10-9 13-1 5-12Z"/></svg>'
   };
+  const sunIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.75"></circle><path d="M12 2.5v2M12 19.5v2M5.28 5.28l1.42 1.42M17.3 17.3l1.42 1.42M2.5 12h2M19.5 12h2M5.28 18.72l1.42-1.42M17.3 6.7l1.42-1.42"></path></svg>';
+  const moonIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 14.3A8.5 8.5 0 0 1 9.7 3.8 8.5 8.5 0 1 0 20.2 14.3Z"></path></svg>';
 
   function announce(message) { liveStatus.textContent = message; }
   function setFocus(selector) {
@@ -20,21 +23,52 @@
   function esc(value) {
     return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
   }
+  function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
+  function setTheme(theme, announceChange = false) {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try { localStorage.setItem(themeStorageKey, theme); } catch (error) { /* Theme still works without storage. */ }
+    const toggle = app.querySelector("#theme-toggle");
+    if (toggle) {
+      const isDark = theme === "dark";
+      toggle.setAttribute("aria-pressed", String(isDark));
+      toggle.setAttribute("aria-label", isDark ? "Switch to light theme" : "Switch to dark theme");
+      toggle.innerHTML = `<span class="theme-toggle-icon">${isDark ? sunIcon : moonIcon}</span><span class="theme-toggle-label">${isDark ? "Light" : "Dark"}</span>`;
+    }
+    if (announceChange) announce(`${theme === "dark" ? "Dark" : "Light"} theme selected.`);
+  }
   function icon(sector, className = "sector-icon") {
     return `<span class="${className}" style="--sector-color: ${sector.color}">${sectorIcons[sector.icon]}</span>`;
   }
+  function renderConnections() {
+    return `<svg class="connection-field" viewBox="0 0 1100 760" preserveAspectRatio="none" aria-hidden="true">
+      <path class="connection-line line-a" d="M-30 158C180 61 228 285 415 198s197-193 380-82 158 79 340-75"/>
+      <path class="connection-line line-b" d="M-20 600c181-95 267 70 438-18 166-85 173-247 360-154 120 59 183 65 353-6"/>
+      <path class="connection-line line-c" d="M110 745c53-167 188-131 286-225 106-102 210-51 281-179"/>
+      <g class="connection-node node-teal"><circle cx="415" cy="198" r="7"/><circle cx="415" cy="198" r="15"/></g>
+      <g class="connection-node node-blue"><circle cx="778" cy="446" r="7"/><circle cx="778" cy="446" r="15"/></g>
+      <g class="connection-node node-gold"><circle cx="916" cy="95" r="7"/><circle cx="916" cy="95" r="15"/></g>
+      <g class="connection-node node-green"><circle cx="394" cy="520" r="6"/><circle cx="394" cy="520" r="13"/></g>
+    </svg>`;
+  }
+  function renderThemeToggle() {
+    const isDark = currentTheme() === "dark";
+    return `<button class="theme-toggle" id="theme-toggle" type="button" aria-label="${isDark ? "Switch to light theme" : "Switch to dark theme"}" aria-pressed="${isDark}"><span class="theme-toggle-icon">${isDark ? sunIcon : moonIcon}</span><span class="theme-toggle-label">${isDark ? "Light" : "Dark"}</span></button>`;
+  }
   function renderLayout(content) {
     app.innerHTML = `
-      <div class="backdrop-shape shape-one" aria-hidden="true"></div>
-      <div class="backdrop-shape shape-two" aria-hidden="true"></div>
+      ${renderConnections()}
+      <div class="backdrop-node backdrop-node-a" aria-hidden="true"></div>
+      <div class="backdrop-node backdrop-node-b" aria-hidden="true"></div>
       <section class="quiz-frame" aria-labelledby="page-title">
         <header class="brand-row">
-          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-          <p class="eyebrow">VISION 2030 · CAREER EXPLORER</p>
+          <div class="brand-identity"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><p class="eyebrow">SECTOR EXPLORER</p></div>
+          ${renderThemeToggle()}
         </header>
         ${content}
-        <footer class="quiz-footer">A light, illustrative reflection—not an official assessment or career recommendation.</footer>
+        <footer class="quiz-footer">A proposed Saudi-inspired identity. This light reflection is not an official assessment or career recommendation.</footer>
       </section>`;
+    app.querySelector("#theme-toggle").addEventListener("click", () => setTheme(currentTheme() === "dark" ? "light" : "dark", true));
   }
 
   function renderWelcome() {
@@ -42,9 +76,9 @@
     renderLayout(`
       <div class="intro-layout">
         <div class="intro-copy">
-          <span class="mini-tag">10 thoughtful questions</span>
+          <span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>10 thoughtful questions</span>
           <h1 id="page-title" tabindex="-1">Which sector <em>suits you?</em></h1>
-          <p class="lead">Explore the kind of work and impact that energizes you, then meet an illustrative sector match.</p>
+          <p class="lead">Follow a few simple choices, connect the patterns, and discover a direction worth exploring.</p>
           <div class="notice" role="note">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6M12 7h.01"></path></svg>
             <p>This quiz uses neutral example descriptions and jobs. You can replace its content later—it is not official Vision 2030 guidance.</p>
@@ -53,10 +87,9 @@
           <p class="privacy-note">Your choices stay in this browser tab. Nothing is saved or sent.</p>
         </div>
         <div class="hero-art" aria-hidden="true">
-          <div class="art-orbit orbit-a"></div><div class="art-orbit orbit-b"></div>
-          <div class="art-card art-card-main"><span class="art-card-label">YOUR PATH</span><strong>Start<br>exploring</strong><i></i></div>
+          <svg class="journey-map" viewBox="0 0 370 340"><path d="M16 263C61 174 109 283 175 206S260 85 350 100"/><path d="M35 60c72 7 63 86 140 95s82-23 142-76"/><g class="journey-node gold"><circle cx="175" cy="206" r="9"/><circle cx="175" cy="206" r="18"/></g><g class="journey-node teal"><circle cx="277" cy="126" r="9"/><circle cx="277" cy="126" r="18"/></g><g class="journey-node blue"><circle cx="98" cy="192" r="7"/><circle cx="98" cy="192" r="14"/></g></svg>
+          <div class="outcome-card"><span class="art-card-label">YOUR OUTCOME</span><strong>Find your<br>direction</strong><i></i></div>
           <div class="art-chip chip-a">01</div><div class="art-chip chip-b">10</div>
-          <svg class="art-lines" viewBox="0 0 370 340"><path d="M20 253C75 180 110 278 174 212s68-118 164-112"/><circle cx="174" cy="212" r="7"/><circle cx="338" cy="100" r="7"/></svg>
         </div>
       </div>`);
     app.querySelector("#start-button").addEventListener("click", () => {
@@ -89,7 +122,7 @@
     renderLayout(`
       <div class="quiz-header">
         <div><p class="eyebrow">QUESTION ${state.questionIndex + 1} <span aria-hidden="true">/</span> ${total}</p><h1 id="page-title" class="page-title-small">Find your direction</h1></div>
-        <p class="question-count">Question <strong>${state.questionIndex + 1}</strong> of ${total}</p>
+        <p class="question-count"><span class="count-node" aria-hidden="true"></span>Question <strong>${state.questionIndex + 1}</strong> of ${total}</p>
       </div>
       <div class="progress-track" aria-label="Quiz progress"><div class="progress-bar" style="width:${progress}%"></div></div>
       <section class="question-panel" aria-labelledby="question-title">
@@ -162,7 +195,7 @@
     state.view = "result";
     const { winner, topScore, tieMessage } = state.result;
     renderLayout(`
-      <div class="result-intro"><span class="mini-tag">YOUR QUIZ RESULT</span><h1 id="result-title" tabindex="-1">Your best match</h1><p>Based on the choices you made in this quick reflection.</p></div>
+      <div class="result-intro"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>YOUR QUIZ RESULT</span><h1 id="result-title" tabindex="-1">Your best match</h1><p>Based on the choices you made in this quick reflection.</p></div>
       <article class="result-card" style="--sector-color:${winner.color}">
         <div class="result-art" aria-hidden="true"><div class="result-ring"></div>${icon(winner, "result-icon")}</div>
         <div class="result-details">
@@ -202,5 +235,6 @@
   }
 
   window.QuizEngine.validateData(window.SECTOR_DATA, window.QUESTION_DATA);
+  setTheme(currentTheme());
   renderWelcome();
 })();
