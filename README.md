@@ -12,7 +12,9 @@ A modern web browser is all that is required. No account, server, API key, inter
 
 1. Download or clone this project.
 2. Open `index.html` by double-clicking it.
-3. Choose `العربية` or `English`, answer the questions, and view the result.
+3. Choose `العربية` or `English`, move through the two short introduction screens, answer the questions, and view the result.
+
+After question 10, Massari shows a six-second illustrative analysis sequence. It does **not** alter or delay the actual score calculation. Use **Show result now / اعرض النتيجة الآن** at any time to skip directly to the same result; this is the built-in demo-speed control.
 
 Answers exist only in the current browser tab. They are not saved or uploaded. The chosen language and light/dark appearance may be remembered in the browser so the interface opens in the same style next time.
 
@@ -33,7 +35,8 @@ npm run build
 - **English questions and scoring mappings:** edit `data/questions.js`.
   - Keep sector IDs, question IDs, answer IDs, ordering, and `scores` mappings unchanged if you want to preserve quiz results.
 - **Colors and light/dark theme tokens:** edit the semantic variables at the top of `css/styles.css`.
-- **Original Massari logo and per-sector result visuals:** edit `js/massari-visuals.js`.
+- **Original Massari logo, two introduction scenes, and per-sector result visuals:** edit `js/massari-visuals.js`.
+- **Screen flow and the six-second analysis presentation:** edit `js/app.js` and `js/analysis-timer.js`.
 - **PNG result-card layout and canvas styling:** edit `js/download-card.js`.
 
 The result page includes a local **Download my result / نزّل نتيجتي** action. It creates a PNG in the browser without uploading information.

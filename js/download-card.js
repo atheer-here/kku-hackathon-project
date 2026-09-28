@@ -2,8 +2,8 @@
   const exportPalettes = {
     light: {
       background: "#f5f1e8", card: "#ffffff", text: "#26332f", muted: "#4b5d55", divider: "#bdcdc3",
-      shadow: "rgba(0, 75, 50, .16)", teal: "#007d7d", gold: "#a66d00", goldWash: "#fff2d1",
-      sceneWash: "#f0eadc", sceneHorizon: "#d5c598", sceneLine: "#0b5d42", sector: "#247baa", logoRoute: "#ffffff", logoNode: "#ffffff"
+      shadow: "rgba(0, 75, 50, .16)", teal: "#007f7d", gold: "#d7a84b", goldWash: "#fff1c9",
+      sceneWash: "#ebe5d4", sceneHorizon: "#cdbd8d", sceneLine: "#075b42", sector: "#247baa", logoRoute: "#ffffff", logoNode: "#ffffff"
     },
     dark: {
       background: "#0e211b", card: "#1c382f", text: "#fff8e9", muted: "#d1dfd5", divider: "#6b8b7b",
@@ -119,19 +119,20 @@
     context.fillStyle = palette.text;
     context.font = "700 36px system-ui, Tahoma, Arial, sans-serif";
     context.fillText(ui.cardJobs, start, 808);
-    context.font = "500 32px system-ui, Tahoma, Arial, sans-serif";
-    sector.jobs.forEach((job, index) => {
-      const y = 864 + index * 58;
+    context.font = "500 30px system-ui, Tahoma, Arial, sans-serif";
+    let jobY = 858;
+    sector.jobs.forEach((job) => {
       const bulletX = rtl ? start - 18 : start + 14;
       const textX = rtl ? start - 42 : start + 42;
       context.fillStyle = palette.gold;
-      context.beginPath(); context.arc(bulletX, y - 10, 7, 0, Math.PI * 2); context.fill();
+      context.beginPath(); context.arc(bulletX, jobY - 10, 7, 0, Math.PI * 2); context.fill();
       context.fillStyle = palette.text;
-      context.fillText(job, textX, y);
+      const usedHeight = drawWrappedText(context, job, textX, jobY, 720, 38, align);
+      jobY += Math.max(52, usedHeight + 12);
     });
     context.fillStyle = palette.muted;
-    context.font = "500 23px system-ui, Tahoma, Arial, sans-serif";
-    drawWrappedText(context, ui.cardDisclaimer, start, 940, 1080, 30, align);
+    context.font = "500 21px system-ui, Tahoma, Arial, sans-serif";
+    drawWrappedText(context, ui.cardDisclaimer, start, Math.max(966, jobY + 12), 1080, 27, align);
 
     return new Promise((resolve, reject) => {
       canvas.toBlob((blob) => {
