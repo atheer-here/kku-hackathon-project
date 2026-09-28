@@ -1,29 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="An illustrative self-reflection quiz for exploring sector interests.">
-  <title>Which sector suits you? | Vision 2030 Quiz</title>
+  <meta name="description" content="A bilingual illustrative quiz for exploring sector interests.">
+  <title>Massari | Find your direction</title>
   <script>
     (function () {
       var theme = "light";
+      var language = "en";
       try {
-        var saved = localStorage.getItem("vision-sector-theme");
-        if (saved === "light" || saved === "dark") theme = saved;
+        var savedTheme = localStorage.getItem("vision-sector-theme");
+        if (savedTheme === "light" || savedTheme === "dark") theme = savedTheme;
         else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) theme = "dark";
+        var savedLanguage = localStorage.getItem("massari-language");
+        if (savedLanguage === "en" || savedLanguage === "ar") language = savedLanguage;
+        else if ((navigator.language || "").toLowerCase().indexOf("ar") === 0) language = "ar";
       } catch (error) {
         if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) theme = "dark";
+        if ((navigator.language || "").toLowerCase().indexOf("ar") === 0) language = "ar";
       }
       document.documentElement.dataset.theme = theme;
+      document.documentElement.dataset.language = language;
+      document.documentElement.lang = language;
+      document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
       document.documentElement.style.colorScheme = theme;
     })();
   </script>
   <link rel="stylesheet" href="css/styles.css">
   <script src="data/sectors.js" defer></script>
   <script src="data/questions.js" defer></script>
+  <script src="data/translations.js" defer></script>
   <script src="js/quiz-engine.js" defer></script>
+  <script src="js/massari-visuals.js" defer></script>
   <script src="js/download-card.js" defer></script>
   <script src="js/app.js" defer></script>
 </head>

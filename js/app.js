@@ -1,17 +1,20 @@
 (function () {
   const app = document.getElementById("app");
   const liveStatus = document.getElementById("live-status");
-  const state = { view: "welcome", questionIndex: 0, answers: {}, result: null };
+  const skipLink = document.querySelector(".skip-link");
   const themeStorageKey = "vision-sector-theme";
-  const sectorIcons = {
-    compass: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 7 13 13-13 14L11 20 24 7Z"/><path d="m24 20 6 6"/></svg>',
-    spark: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 5 4 14 14 5-14 5-4 14-5-14-14-5 14-5 5-14Z"/></svg>',
-    heart: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 40S7 30 7 17c0-5 4-9 9-9 4 0 7 2 8 6 1-4 4-6 8-6 5 0 9 4 9 9 0 13-17 23-17 23Z"/></svg>',
-    chart: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 39V26h9v13M20 39V15h9v24M32 39V7h9v32"/></svg>',
-    star: '<svg viewBox="0 0 48 48" aria-hidden="true"><path d="m24 6 5 12 13 1-10 9 3 14-11-7-11 7 3-14-10-9 13-1 5-12Z"/></svg>'
+  const languageStorageKey = "massari-language";
+  const supportedLanguages = window.MASSARI_TRANSLATIONS.locales;
+  const state = {
+    view: "welcome",
+    questionIndex: 0,
+    answers: {},
+    result: null,
+    language: document.documentElement.lang === "ar" ? "ar" : "en"
   };
   const sunIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.75"></circle><path d="M12 2.5v2M12 19.5v2M5.28 5.28l1.42 1.42M17.3 17.3l1.42 1.42M2.5 12h2M19.5 12h2M5.28 18.72l1.42-1.42M17.3 6.7l1.42-1.42"></path></svg>';
   const moonIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 14.3A8.5 8.5 0 0 1 9.7 3.8 8.5 8.5 0 1 0 20.2 14.3Z"></path></svg>';
+  const arrowIcon = '<svg class="direction-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg>';
 
   function announce(message) { liveStatus.textContent = message; }
   function setFocus(selector) {
@@ -24,21 +27,59 @@
     return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
   }
   function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
-  function setTheme(theme, announceChange = false) {
+  function currentLanguage() { return state.language; }
+  function copy() { return window.MASSARI_TRANSLATIONS.translations[currentLanguage()]; }
+  function t(key, values) {
+    let text = window.MASSARI_TRANSLATIONS.getPath(copy().ui, key) || window.MASSARI_TRANSLATIONS.getPath(window.MASSARI_TRANSLATIONS.translations.en.ui, key) || key;
+    Object.entries(values || {}).forEach(([name, value]) => { text = text.replaceAll(`{${name}}`, String(value)); });
+    return text;
+  }
+  function formatNumber(value) { return new Intl.NumberFormat(currentLanguage()).format(value); }
+  function localizeSector(sector) {
+    if (currentLanguage() === "ar") return { ...sector, ...copy().sectors[sector.id] };
+    return sector;
+  }
+  function localizeQuestion(question) {
+    if (currentLanguage() !== "ar") return question;
+    const translated = copy().questions[question.id];
+    return { ...question, text: translated.text, answers: question.answers.map((answer) => ({ ...answer, label: translated.answers[answer.id] })) };
+  }
+  function updateDocumentCopy() {
+    const metaDescription = document.querySelector('meta[name="description"]');
+    document.title = copy().meta.title;
+    if (metaDescription) metaDescription.content = copy().meta.description;
+    skipLink.textContent = t("skip");
+  }
+  function setTheme(theme, announceChange) {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     try { localStorage.setItem(themeStorageKey, theme); } catch (error) { /* Theme still works without storage. */ }
-    const toggle = app.querySelector("#theme-toggle");
-    if (toggle) {
-      const isDark = theme === "dark";
-      toggle.setAttribute("aria-pressed", String(isDark));
-      toggle.setAttribute("aria-label", isDark ? "Switch to light theme" : "Switch to dark theme");
-      toggle.innerHTML = `<span class="theme-toggle-icon">${isDark ? sunIcon : moonIcon}</span><span class="theme-toggle-label">${isDark ? "Light" : "Dark"}</span>`;
-    }
-    if (announceChange) announce(`${theme === "dark" ? "Dark" : "Light"} theme selected.`);
+    if (announceChange) announce(theme === "dark" ? t("themeDarkSelected") : t("themeLightSelected"));
   }
-  function icon(sector, className = "sector-icon") {
-    return `<span class="${className}" style="--sector-color: ${sector.color}">${sectorIcons[sector.icon]}</span>`;
+  function setLanguage(language) {
+    if (!supportedLanguages.includes(language) || language === currentLanguage()) return;
+    state.language = language;
+    document.documentElement.dataset.language = language;
+    document.documentElement.lang = language;
+    document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
+    try { localStorage.setItem(languageStorageKey, language); } catch (error) { /* Language still works without storage. */ }
+    updateDocumentCopy();
+    renderCurrentView();
+    announce(t("statusLanguage"));
+    setFocus(language === "ar" ? "#language-toggle-ar" : "#language-toggle-en");
+  }
+  function renderLogo() {
+    return `<div class="brand-identity"><span class="brand-mark">${window.MassariVisuals.logo()}</span><div class="brand-copy"><strong lang="ar" dir="rtl">مساري</strong><span aria-hidden="true">|</span><strong>Massari</strong><p class="eyebrow">${esc(t("brandKicker"))}</p></div></div>`;
+  }
+  function renderThemeToggle() {
+    const isDark = currentTheme() === "dark";
+    return `<button class="theme-toggle" id="theme-toggle" type="button" aria-label="${esc(isDark ? t("themeToLight") : t("themeToDark"))}" aria-pressed="${isDark}"><span class="theme-toggle-icon">${isDark ? sunIcon : moonIcon}</span><span class="theme-toggle-label">${esc(isDark ? t("themeLight") : t("themeDark"))}</span></button>`;
+  }
+  function renderLanguageToggle() {
+    return `<div class="language-toggle" role="group" aria-label="${esc(t("languageLabel"))}">
+      <button id="language-toggle-en" type="button" data-language="en" aria-pressed="${currentLanguage() === "en"}" lang="en">English</button>
+      <button id="language-toggle-ar" type="button" data-language="ar" aria-pressed="${currentLanguage() === "ar"}" lang="ar" dir="rtl">العربية</button>
+    </div>`;
   }
   function renderConnections() {
     return `<svg class="connection-field" viewBox="0 0 1100 760" preserveAspectRatio="none" aria-hidden="true">
@@ -51,190 +92,66 @@
       <g class="connection-node node-green"><circle cx="394" cy="520" r="6"/><circle cx="394" cy="520" r="13"/></g>
     </svg>`;
   }
-  function renderThemeToggle() {
-    const isDark = currentTheme() === "dark";
-    return `<button class="theme-toggle" id="theme-toggle" type="button" aria-label="${isDark ? "Switch to light theme" : "Switch to dark theme"}" aria-pressed="${isDark}"><span class="theme-toggle-icon">${isDark ? sunIcon : moonIcon}</span><span class="theme-toggle-label">${isDark ? "Light" : "Dark"}</span></button>`;
-  }
   function renderLayout(content) {
-    app.innerHTML = `
-      ${renderConnections()}
-      <div class="backdrop-node backdrop-node-a" aria-hidden="true"></div>
-      <div class="backdrop-node backdrop-node-b" aria-hidden="true"></div>
-      <section class="quiz-frame" aria-labelledby="page-title">
-        <header class="brand-row">
-          <div class="brand-identity"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><p class="eyebrow">SECTOR EXPLORER</p></div>
-          ${renderThemeToggle()}
-        </header>
-        ${content}
-        <footer class="quiz-footer">A proposed Saudi-inspired identity. This light reflection is not an official assessment or career recommendation.</footer>
-      </section>`;
+    app.innerHTML = `${renderConnections()}<div class="backdrop-node backdrop-node-a" aria-hidden="true"></div><div class="backdrop-node backdrop-node-b" aria-hidden="true"></div>
+      <section class="quiz-frame" aria-labelledby="page-title"><header class="brand-row">${renderLogo()}<div class="header-actions">${renderLanguageToggle()}${renderThemeToggle()}</div></header>${content}<footer class="quiz-footer">${esc(t("footer"))}</footer></section>`;
     app.querySelector("#theme-toggle").addEventListener("click", () => setTheme(currentTheme() === "dark" ? "light" : "dark", true));
+    app.querySelectorAll(".language-toggle button").forEach((button) => button.addEventListener("click", (event) => setLanguage(event.currentTarget.dataset.language)));
   }
-
   function renderWelcome() {
-    state.view = "welcome";
-    renderLayout(`
-      <div class="intro-layout">
-        <div class="intro-copy">
-          <span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>10 thoughtful questions</span>
-          <h1 id="page-title" tabindex="-1">Which sector <em>suits you?</em></h1>
-          <p class="lead">Follow a few simple choices, connect the patterns, and discover a direction worth exploring.</p>
-          <div class="notice" role="note">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6M12 7h.01"></path></svg>
-            <p>This quiz uses neutral example descriptions and jobs. You can replace its content later—it is not official Vision 2030 guidance.</p>
-          </div>
-          <button class="button button-primary button-wide" id="start-button" type="button">Start the quiz <span aria-hidden="true">→</span></button>
-          <p class="privacy-note">Your choices stay in this browser tab. Nothing is saved or sent.</p>
-        </div>
-        <div class="hero-art" aria-hidden="true">
-          <svg class="journey-map" viewBox="0 0 370 340"><path d="M16 263C61 174 109 283 175 206S260 85 350 100"/><path d="M35 60c72 7 63 86 140 95s82-23 142-76"/><g class="journey-node gold"><circle cx="175" cy="206" r="9"/><circle cx="175" cy="206" r="18"/></g><g class="journey-node teal"><circle cx="277" cy="126" r="9"/><circle cx="277" cy="126" r="18"/></g><g class="journey-node blue"><circle cx="98" cy="192" r="7"/><circle cx="98" cy="192" r="14"/></g></svg>
-          <div class="outcome-card"><span class="art-card-label">YOUR OUTCOME</span><strong>Find your<br>direction</strong><i></i></div>
-          <div class="art-chip chip-a">01</div><div class="art-chip chip-b">10</div>
-        </div>
-      </div>`);
-    app.querySelector("#start-button").addEventListener("click", () => {
-      state.view = "question";
-      state.questionIndex = 0;
-      renderQuestion();
-      announce("Quiz started. Question 1 of 10.");
-      setFocus("#question-title");
-    });
-    setFocus("#page-title");
+    renderLayout(`<div class="intro-layout"><div class="intro-copy"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>${esc(t("welcomeTag"))}</span><h1 id="page-title" tabindex="-1">${t("welcomeTitle")}</h1><p class="lead">${esc(t("welcomeLead"))}</p><div class="notice" role="note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v6M12 7h.01"></path></svg><p>${esc(t("notice"))}</p></div><button class="button button-primary button-wide" id="start-button" type="button">${esc(t("start"))} ${arrowIcon}</button><p class="privacy-note">${esc(t("privacy"))}</p></div>
+      <div class="hero-art" aria-hidden="true"><svg class="journey-map" viewBox="0 0 370 340"><path d="M16 263C61 174 109 283 175 206S260 85 350 100"/><path d="M35 60c72 7 63 86 140 95s82-23 142-76"/><g class="journey-node gold"><circle cx="175" cy="206" r="9"/><circle cx="175" cy="206" r="18"/></g><g class="journey-node teal"><circle cx="277" cy="126" r="9"/><circle cx="277" cy="126" r="18"/></g><g class="journey-node blue"><circle cx="98" cy="192" r="7"/><circle cx="98" cy="192" r="14"/></g></svg><div class="outcome-card"><span class="art-card-label">${esc(t("heroLabel"))}</span><strong>${esc(t("heroOutcome")).replace("\n", "<br>")}</strong><i></i></div><div class="art-chip chip-a">01</div><div class="art-chip chip-b">10</div></div></div>`);
+    app.querySelector("#start-button").addEventListener("click", () => { state.view = "question"; state.questionIndex = 0; renderQuestion(); announce(t("statusStart", { total: window.QUESTION_DATA.length })); setFocus("#question-title"); });
   }
-
   function renderQuestion() {
-    state.view = "question";
-    const question = window.QUESTION_DATA[state.questionIndex];
+    const baseQuestion = window.QUESTION_DATA[state.questionIndex];
+    const question = localizeQuestion(baseQuestion);
     const total = window.QUESTION_DATA.length;
-    const selected = state.answers[question.id];
+    const selected = state.answers[baseQuestion.id];
     const isFinal = state.questionIndex === total - 1;
     const progress = Math.round(((state.questionIndex + 1) / total) * 100);
     const answersMarkup = question.answers.map((answer, index) => {
       const checked = selected === answer.id ? "checked" : "";
-      return `<label class="answer-option ${checked ? "is-selected" : ""}">
-        <input type="radio" name="${esc(question.id)}" value="${esc(answer.id)}" ${checked}>
-        <span class="answer-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
-        <span class="answer-label">${esc(answer.label)}</span>
-        <span class="answer-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4.3 4.3L19 6.7"></path></svg></span>
-      </label>`;
+      return `<label class="answer-option ${checked ? "is-selected" : ""}"><input type="radio" name="${esc(baseQuestion.id)}" value="${esc(answer.id)}" ${checked}><span class="answer-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><span class="answer-label">${esc(answer.label)}</span><span class="answer-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4.3 4.3L19 6.7"></path></svg></span></label>`;
     }).join("");
-
-    renderLayout(`
-      <div class="quiz-header">
-        <div><p class="eyebrow">QUESTION ${state.questionIndex + 1} <span aria-hidden="true">/</span> ${total}</p><h1 id="page-title" class="page-title-small">Find your direction</h1></div>
-        <p class="question-count"><span class="count-node" aria-hidden="true"></span>Question <strong>${state.questionIndex + 1}</strong> of ${total}</p>
-      </div>
-      <div class="progress-track" aria-label="Quiz progress"><div class="progress-bar" style="width:${progress}%"></div></div>
-      <section class="question-panel" aria-labelledby="question-title">
-        <p class="section-kicker">Choose the answer that feels most like you</p>
-        <fieldset>
-          <legend id="question-title" tabindex="-1">${esc(question.text)}</legend>
-          <div class="answer-list">${answersMarkup}</div>
-        </fieldset>
-        <div class="nav-row">
-          ${state.questionIndex > 0 ? '<button class="button button-secondary" id="back-button" type="button"><span aria-hidden="true">←</span> Back</button>' : '<span></span>'}
-          <button class="button button-primary" id="next-button" type="button" ${selected ? "" : "disabled"}>${isFinal ? "See my result" : "Next"} <span aria-hidden="true">→</span></button>
-        </div>
-      </section>`);
-
-    app.querySelectorAll("input[type=radio]").forEach((input) => {
-      input.addEventListener("change", (event) => {
-        state.answers[question.id] = event.target.value;
-        app.querySelectorAll(".answer-option").forEach((option) => option.classList.toggle("is-selected", option.contains(event.target)));
-        app.querySelector("#next-button").disabled = false;
-        announce("Answer selected. You can continue when ready.");
-      });
-    });
+    renderLayout(`<div class="quiz-header"><div><p class="eyebrow">${esc(t("questionKicker", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) }))}</p><h1 id="page-title" class="page-title-small">${esc(t("questionTitle"))}</h1></div><p class="question-count"><span class="count-node" aria-hidden="true"></span>${esc(t("questionCount", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) }))}</p></div><div class="progress-track" role="progressbar" aria-label="${esc(t("progressLabel"))}" aria-valuemin="1" aria-valuemax="${total}" aria-valuenow="${state.questionIndex + 1}" aria-valuetext="${esc(t("progressText", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) }))}"><div class="progress-bar" style="width:${progress}%"></div></div><section class="question-panel" aria-labelledby="question-title"><p class="section-kicker">${esc(t("answerPrompt"))}</p><fieldset><legend id="question-title" tabindex="-1">${esc(question.text)}</legend><div class="answer-list">${answersMarkup}</div></fieldset><div class="nav-row">${state.questionIndex > 0 ? `<button class="button button-secondary button-back" id="back-button" type="button">${arrowIcon}${esc(t("back"))}</button>` : "<span></span>"}<button class="button button-primary" id="next-button" type="button" ${selected ? "" : "disabled"}>${esc(isFinal ? t("seeResult") : t("next"))}${arrowIcon}</button></div></section>`);
+    app.querySelectorAll("input[type=radio]").forEach((input) => input.addEventListener("change", (event) => { state.answers[baseQuestion.id] = event.target.value; app.querySelectorAll(".answer-option").forEach((option) => option.classList.toggle("is-selected", option.contains(event.target))); app.querySelector("#next-button").disabled = false; announce(t("statusAnswer")); }));
     const backButton = app.querySelector("#back-button");
-    if (backButton) backButton.addEventListener("click", () => {
-      state.questionIndex -= 1;
-      renderQuestion();
-      announce(`Question ${state.questionIndex + 1} of ${total}.`);
-      setFocus("#question-title");
-    });
+    if (backButton) backButton.addEventListener("click", () => { state.questionIndex -= 1; renderQuestion(); announce(t("statusQuestion", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) })); setFocus("#question-title"); });
     app.querySelector("#next-button").addEventListener("click", () => {
-      if (!state.answers[question.id]) return;
+      if (!state.answers[baseQuestion.id]) return;
       if (isFinal) {
-        try {
-          state.result = window.QuizEngine.calculateResult(window.SECTOR_DATA, window.QUESTION_DATA, state.answers);
-          renderResult();
-          announce(`Result ready. Your best match is ${state.result.winner.name}.`);
-          setFocus("#result-title");
-        } catch (error) {
-          announce(error.message);
-        }
-      } else {
-        state.questionIndex += 1;
-        renderQuestion();
-        announce(`Question ${state.questionIndex + 1} of ${total}.`);
-        setFocus("#question-title");
-      }
+        try { state.result = window.QuizEngine.calculateResult(window.SECTOR_DATA, window.QUESTION_DATA, state.answers); state.view = "result"; renderResult(); announce(t("statusResult", { sector: localizeSector(state.result.winner).name })); setFocus("#result-title"); }
+        catch (error) { console.error(error); announce(t("errorResult")); }
+      } else { state.questionIndex += 1; renderQuestion(); announce(t("statusQuestion", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) })); setFocus("#question-title"); }
     });
   }
-
   function renderChart(result) {
     const maxScore = Math.max(...Object.values(result.scores), 1);
-    return `<section class="score-chart viz-root" aria-labelledby="chart-title">
-      <div class="chart-heading"><div><p class="section-kicker">Your full picture</p><h2 id="chart-title">Scores across all sectors</h2></div><span class="score-key">points</span></div>
-      <div class="chart-rows">
-        ${window.SECTOR_DATA.map((sector) => {
-          const score = result.scores[sector.id];
-          const width = Math.max(score > 0 ? 8 : 0, (score / maxScore) * 100);
-          return `<div class="chart-row" tabindex="0" aria-label="${esc(sector.name)}: ${score} points">
-            <div class="chart-label"><span class="chart-dot" style="--sector-color:${sector.color}"></span><span>${esc(sector.name)}</span></div>
-            <div class="chart-track"><div class="chart-fill" style="--sector-color:${sector.color}; width:${width}%"></div></div>
-            <strong>${score}<span> pts</span></strong>
-          </div>`;
-        }).join("")}
-      </div>
-      <p class="chart-summary">Your strongest score is <strong>${result.topScore} points</strong> in ${esc(result.winner.name)}.</p>
-    </section>`;
+    return `<section class="score-chart viz-root" aria-labelledby="chart-title"><div class="chart-heading"><div><p class="section-kicker">${esc(t("chartKicker"))}</p><h2 id="chart-title">${esc(t("chartTitle"))}</h2></div><span class="score-key">${esc(t("points"))}</span></div><div class="chart-rows">${window.SECTOR_DATA.map((sector) => { const score = result.scores[sector.id]; const width = Math.max(score > 0 ? 8 : 0, (score / maxScore) * 100); const localized = localizeSector(sector); return `<div class="chart-row" aria-label="${esc(`${localized.name}: ${formatNumber(score)} ${t("points")}`)}"><div class="chart-label"><span class="chart-dot" style="--sector-color:${sector.color}"></span><span>${esc(localized.name)}</span></div><div class="chart-track" aria-hidden="true"><div class="chart-fill" style="--sector-color:${sector.color}; width:${width}%"></div></div><strong>${formatNumber(score)}<span> ${esc(t("points"))}</span></strong></div>`; }).join("")}</div><p class="chart-summary">${t("chartSummary", { score: formatNumber(result.topScore), sector: esc(localizeSector(result.winner).name) })}</p></section>`;
   }
-
   function renderResult() {
-    state.view = "result";
-    const { winner, topScore, tieMessage } = state.result;
-    renderLayout(`
-      <div class="result-intro"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>YOUR QUIZ RESULT</span><h1 id="result-title" tabindex="-1">Your best match</h1><p>Based on the choices you made in this quick reflection.</p></div>
-      <article class="result-card" style="--sector-color:${winner.color}">
-        <div class="result-art" aria-hidden="true"><div class="result-ring"></div>${icon(winner, "result-icon")}</div>
-        <div class="result-details">
-          <p class="section-kicker">A bright direction to explore</p>
-          <h2>${esc(winner.name)}</h2>
-          <p class="result-description">${esc(winner.description)}</p>
-          <div class="result-score"><span>Best-match score</span><strong>${topScore}<small> points</small></strong></div>
-        </div>
-        <div class="jobs-panel"><p>Two example jobs</p><ul>${winner.jobs.map((job) => `<li>${esc(job)}</li>`).join("")}</ul></div>
-      </article>
-      ${tieMessage ? `<p class="tie-note" role="note">${esc(tieMessage)}</p>` : ""}
-      ${renderChart(state.result)}
-      <div class="result-actions"><button class="button button-primary" id="download-button" type="button">Download my result <span aria-hidden="true">↓</span></button><button class="button button-secondary" id="retry-button" type="button">Try again <span aria-hidden="true">↺</span></button></div>
-      <p class="result-disclaimer">These sectors, example roles, and scores are illustrative examples only. Replace the data files with approved content if needed.</p>`);
-
-    app.querySelector("#retry-button").addEventListener("click", () => {
-      state.questionIndex = 0;
-      state.answers = {};
-      state.result = null;
-      renderWelcome();
-      announce("Quiz reset. You can start again.");
-    });
+    const { winner, topScore, tiedSectorIds } = state.result;
+    const localizedWinner = localizeSector(winner);
+    renderLayout(`<div class="result-intro"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>${esc(t("resultTag"))}</span><h1 id="result-title" tabindex="-1">${esc(t("resultTitle"))}</h1><p>${esc(t("resultLead"))}</p></div><article class="result-card" style="--sector-color:${winner.color}"><div class="result-art" aria-hidden="true"><div class="result-ring"></div>${window.MassariVisuals.sectorVisual(winner.id, "result-icon")}</div><div class="result-details"><p class="section-kicker">${esc(t("resultKicker"))}</p><h2>${esc(localizedWinner.name)}</h2><p class="result-description">${esc(localizedWinner.description)}</p><div class="result-score"><span>${esc(t("scoreLabel"))}</span><strong>${formatNumber(topScore)}<small> ${esc(t("points"))}</small></strong></div></div><div class="jobs-panel"><p>${esc(t("jobsLabel"))}</p><ul>${localizedWinner.jobs.map((job) => `<li>${esc(job)}</li>`).join("")}</ul></div></article>${tiedSectorIds.length > 1 ? `<p class="tie-note" role="note">${esc(t("tie"))}</p>` : ""}${renderChart(state.result)}<div class="result-actions"><button class="button button-primary" id="download-button" type="button">${esc(t("download"))}${arrowIcon}</button><button class="button button-secondary" id="retry-button" type="button">${esc(t("retry"))}<span class="retry-icon" aria-hidden="true">↺</span></button></div><p class="result-disclaimer">${esc(t("resultDisclaimer"))}</p>`);
+    app.querySelector("#retry-button").addEventListener("click", () => { state.view = "welcome"; state.questionIndex = 0; state.answers = {}; state.result = null; renderWelcome(); announce(t("statusReset")); setFocus("#page-title"); });
     app.querySelector("#download-button").addEventListener("click", async (event) => {
       const button = event.currentTarget;
-      button.disabled = true;
-      button.innerHTML = "Creating image…";
-      try {
-        await window.downloadResultCard(state.result);
-        button.innerHTML = "Downloaded <span aria-hidden=\"true\">✓</span>";
-        announce("Your result image was downloaded.");
-      } catch (error) {
-        button.innerHTML = "Could not download";
-        announce(error.message || "The result image could not be downloaded.");
-      }
-      setTimeout(() => { button.disabled = false; button.innerHTML = "Download my result <span aria-hidden=\"true\">↓</span>"; }, 1600);
+      button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = t("downloading");
+      try { await window.downloadResultCard(state.result, { language: currentLanguage(), copy: copy(), sector: localizedWinner }); button.innerHTML = `${esc(t("downloaded"))} <span aria-hidden="true">✓</span>`; announce(t("statusDownloaded")); }
+      catch (error) { console.error(error); button.textContent = t("downloadFailure"); announce(error.message || t("errorDownload")); }
+      setTimeout(() => { button.disabled = false; button.removeAttribute("aria-busy"); button.innerHTML = `${esc(t("download"))}${arrowIcon}`; }, 1600);
     });
+  }
+  function renderCurrentView() {
+    if (state.view === "question") renderQuestion();
+    else if (state.view === "result" && state.result) renderResult();
+    else renderWelcome();
   }
 
   window.QuizEngine.validateData(window.SECTOR_DATA, window.QUESTION_DATA);
+  window.MASSARI_TRANSLATIONS.validateTranslations(window.SECTOR_DATA, window.QUESTION_DATA);
+  updateDocumentCopy();
   setTheme(currentTheme());
-  renderWelcome();
+  renderCurrentView();
 })();
