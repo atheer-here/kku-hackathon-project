@@ -135,7 +135,10 @@
   function next(origin) {
     var v = st.view;
     if (v === "intro") go("intermission", { origin: origin });
-    else if (v === "intermission") go("question", { q: 0, origin: origin });
+    else if (v === "intermission") {
+      if (st.result || st.isExample) resetTake(); // finished or example take: start fresh; mid-take answers are kept
+      go("question", { q: 0, origin: origin });
+    }
     else if (v === "question") {
       if (!st.answers[Q[st.q].id]) return;
       var gap = Q.findIndex(function (x) { return !st.answers[x.id]; });
@@ -154,6 +157,7 @@
     var h = document.querySelector("#view h1");
     if (h) { h.setAttribute("tabindex", "-1"); try { h.focus({ preventScroll: true }); } catch (e) { h.focus(); } }
   }
+  function resetTake() { st.answers = {}; st.result = null; st.isExample = false; st.q = 0; }
   function computeResult() { st.result = E.score(S, Q, st.answers); return st.result; }
 
   /* ---------- render ---------- */
@@ -462,7 +466,7 @@
       drawRunner();
       $("dl").onclick = download;
       $("edit").onclick = function (e) { go("question", { q: Q.length - 1, dir: -1, origin: centre(e.currentTarget) }); };
-      $("retake").onclick = function (e) { st.answers = {}; st.result = null; st.isExample = false; st.q = 0; st.slide = 0; go("intro", { dir: -1, origin: centre(e.currentTarget) }); };
+      $("retake").onclick = function (e) { resetTake(); st.slide = 0; go("intro", { dir: -1, origin: centre(e.currentTarget) }); };
       var arc = $("arc"), num = $("dialNum"), fills = qa(".v-res .fill");
       var finish = function () { arc.style.strokeDashoffset = arc.dataset.to; fills.forEach(function (f) { f.style.width = f.dataset.w + "%"; }); };
       if (instant || !M.enabled()) { finish(); num.textContent = num.dataset.to; return; }
