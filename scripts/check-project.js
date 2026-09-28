@@ -1,40 +1,98 @@
-const fs = require("node:fs");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+// Static checks for Massari. No dependencies: node scripts/check-project.js
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+const { execSync, execFileSync } = require("child_process");
 
 const root = path.resolve(__dirname, "..");
-const files = [
-  "index.html", "css/styles.css", "data/sectors.js", "data/questions.js", "data/translations.js",
-  "js/quiz-engine.js", "js/massari-visuals.js", "js/download-card.js", "js/analysis-timer.js", "js/app.js", "package.json"
-];
-for (const file of files) if (!fs.existsSync(path.join(root, file))) throw new Error(`Missing required file: ${file}`);
+const fail = (msg) => { throw new Error("Project check failed: " + msg); };
+const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-const references = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
-references.forEach((reference) => {
-  if (reference.startsWith("#")) return;
-  if (/^(https?:|\/\/)/i.test(reference)) throw new Error(`Remote reference is not allowed: ${reference}`);
-  if (!fs.existsSync(path.join(root, reference))) throw new Error(`Missing referenced file: ${reference}`);
-});
-const sourceFiles = ["index.html", "css/styles.css", "data/sectors.js", "data/questions.js", "data/translations.js", "js/quiz-engine.js", "js/massari-visuals.js", "js/download-card.js", "js/analysis-timer.js", "js/app.js"];
-sourceFiles.forEach((file) => {
-  const text = fs.readFileSync(path.join(root, file), "utf8");
-  if (/https?:\/\//i.test(text)) throw new Error(`Remote URL found in shipped file: ${file}`);
-});
-const stylesheet = fs.readFileSync(path.join(root, "css/styles.css"), "utf8");
-if (!stylesheet.includes("--bg:") || !stylesheet.includes('html[data-theme="dark"]')) throw new Error("Theme token layers are missing from the stylesheet.");
-if (!stylesheet.includes('[dir="rtl"]') || !stylesheet.includes("border-inline-start")) throw new Error("RTL-aware logical styling is missing from the stylesheet.");
-if (!stylesheet.includes("prefers-reduced-motion") || !stylesheet.includes("--on-strong") || !stylesheet.includes(".chart-row.is-winner")) throw new Error("Massari visual accessibility and winner styling are incomplete.");
-if (!html.includes("vision-sector-theme") || !html.includes("massari-language") || !html.includes("color-scheme") || !html.includes("document.documentElement.dir")) throw new Error("Pre-paint theme and language bootstrap is missing from index.html.");
-if (!html.includes('src="data/translations.js"') || !html.includes('src="js/massari-visuals.js"') || !html.includes('src="js/analysis-timer.js"')) throw new Error("Massari localization, visuals, or analysis timer script is not loaded.");
-if (html.indexOf('src="js/analysis-timer.js"') > html.indexOf('src="js/app.js"')) throw new Error("Analysis timer must load before app.js.");
-const appScript = fs.readFileSync(path.join(root, "js/app.js"), "utf8");
-if (!appScript.includes("theme-toggle") || !appScript.includes("language-toggle") || !appScript.includes("aria-pressed")) throw new Error("Accessible theme or language controls are missing from app.js.");
-if (!appScript.includes('view = "analysis"') || !appScript.includes("analysis-skip") || !appScript.includes('role="progressbar"')) throw new Error("Analysis flow, skip action, or accessible progress is missing from app.js.");
-const visualScript = fs.readFileSync(path.join(root, "js/massari-visuals.js"), "utf8");
-["startingPointScene", "pathScene", "sectorScene", "drawSectorScene", "drawLogo"].forEach((name) => { if (!visualScript.includes(name)) throw new Error(`Missing Massari visual renderer: ${name}`); });
-["data/sectors.js", "data/questions.js", "data/translations.js", "js/quiz-engine.js", "js/massari-visuals.js", "js/download-card.js", "js/analysis-timer.js", "js/app.js"].forEach((file) => {
-  const check = spawnSync(process.execPath, ["--check", path.join(root, file)], { encoding: "utf8" });
-  if (check.status !== 0) throw new Error(`Syntax error in ${file}: ${check.stderr}`);
-});
+// Exact-case existence: Windows ignores case, so compare against real directory listings.
+function existsExact(rel) {
+  let dir = root;
+  for (const seg of rel.split("/").filter(Boolean)) {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
+    if (!fs.readdirSync(dir).includes(seg)) return false;
+    dir = path.join(dir, seg);
+  }
+  return true;
+}
+
+const required = [
+  "index.html", "css/fonts.css", "css/tokens.css", "css/app.css",
+  "data/sectors.js", "data/questions.js", "data/i18n.js", "sample-data/data.js",
+  "js/icons.js", "js/engine.js", "js/scenes.js", "js/motion.js", "js/card.js", "js/app.js",
+  "vendor/gsap/gsap.min.js", "CREDITS.md",
+];
+for (const f of required) if (!existsExact(f)) fail(`missing required file (exact case): ${f}`);
+
+// Local references in index.html
+const html = read("index.html");
+for (const m of html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/g)) {
+  const ref = m[1].split(/[?#]/)[0];
+  if (!ref || /^(#|data:|mailto:|javascript:)/.test(m[1])) continue;
+  if (!existsExact(ref)) fail(`index.html references missing file (check exact case): ${m[1]}`);
+}
+
+function walk(dir) {
+  const abs = path.join(root, dir);
+  if (!fs.existsSync(abs)) return [];
+  return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => {
+    const rel = dir + "/" + e.name;
+    return e.isDirectory() ? walk(rel) : [rel];
+  });
+}
+
+// No internet links in app code (vendor excluded)
+const own = ["index.html", ...["css", "data", "js", "sample-data"].flatMap(walk)];
+for (const f of own) {
+  if (!/\.(html|css|js|json|txt|md)$/.test(f)) continue;
+  if (/https?:\/\//.test(read(f))) fail(`${f} contains an http(s) link; everything must be local`);
+}
+
+// Every css url(...) resolves
+for (const f of walk("css").filter((f) => f.endsWith(".css"))) {
+  for (const m of read(f).matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
+    if (/^(data:|#)/.test(m[1])) continue;
+    const rel = path.posix.normalize(path.posix.join(path.posix.dirname(f), m[1].split(/[?#]/)[0]));
+    if (!existsExact(rel)) fail(`${f} url(${m[1]}) not found (check exact case)`);
+  }
+}
+
+// Tracked + untracked (not ignored) files: size and names
+let files;
+try {
+  files = execSync("git ls-files -co --exclude-standard", { cwd: root, encoding: "utf8" }).split("\n").filter(Boolean);
+} catch { fail("git ls-files failed; run inside the git repository"); }
+for (const f of files) {
+  if (!fs.existsSync(path.join(root, f))) continue; // deleted but still in index
+  for (const seg of f.split("/")) {
+    if (!/^[A-Za-z0-9._-]+$/.test(seg)) fail(`bad file name (use only A-Z a-z 0-9 . _ -): ${f}`);
+  }
+  if (fs.statSync(path.join(root, f)).size >= 10 * 1024 * 1024) fail(`file is 10 MB or larger: ${f}`);
+}
+
+// Every sector photo is credited
+const sandbox = { window: {} };
+sandbox.self = sandbox.globalThis = sandbox.window;
+vm.createContext(sandbox);
+vm.runInContext(read("data/sectors.js"), sandbox);
+const sectors = sandbox.window.MASSARI_SECTORS || sandbox.MASSARI_SECTORS;
+if (!Array.isArray(sectors)) fail("data/sectors.js must define window.MASSARI_SECTORS as an array");
+const credits = read("CREDITS.md");
+for (const s of sectors) {
+  const file = s.photo && s.photo.file;
+  if (!file) fail(`sector ${s.id} has no photo.file`);
+  if (!existsExact(file)) fail(`sector ${s.id} photo missing: ${file}`);
+  if (!credits.includes(file)) fail(`CREDITS.md does not mention ${file}`);
+}
+
+// Syntax check own JS
+for (const f of ["js", "data", "sample-data", "scripts"].flatMap(walk).filter((f) => f.endsWith(".js"))) {
+  try { execFileSync(process.execPath, ["--check", path.join(root, f)], { stdio: "pipe" }); }
+  catch (e) { fail(`syntax error in ${f}\n${e.stderr}`); }
+}
+
 console.log("Static project checks passed.");

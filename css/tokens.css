@@ -1,0 +1,75 @@
+/* Massari design tokens: "Sculpted Sand". One surface colour; depth comes from paired shadows.
+   --d (0..1) scales every shadow, so a whole view can sink into the sand (1 -> 0) or rise out of it (0 -> 1). */
+@property --d { syntax: "<number>"; inherits: true; initial-value: 1; }
+
+:root, html[data-theme="light"] {
+  --bg: #E9DFCD;
+  --surface: #EDE4D4;
+  --hi: #FFF8EB;
+  --lo: rgba(151, 124, 82, .42);
+  --lo-deep: rgba(120, 96, 60, .5);
+  --ink: #2A241C;
+  --ink-soft: #5B4F3F;
+  --ink-mute: #8C7B63;
+  --gold: #A97C27;
+  --gold-ink: #7A5815;
+  --accent: #9C4A22;
+  --on-accent: #FFF6EA;
+  --focus: #7A5815;
+  --line: rgba(76, 58, 30, .14);
+  --line-2: rgba(76, 58, 30, .26);
+  --scrim: 20, 14, 8;
+  --sky-1: #1B2436;
+  --sky-2: #33405A;
+  --star: #F5E7C8;
+  --convex: linear-gradient(145deg, rgba(255,251,242,.55), rgba(255,251,242,0) 55%, rgba(120,96,60,.06));
+  --deboss-text: 0 1px 0 var(--hi);
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --bg: #1C2027;
+  --surface: #20252D;
+  --hi: rgba(62, 70, 84, .55);
+  --lo: rgba(5, 6, 9, .78);
+  --lo-deep: rgba(0, 0, 0, .85);
+  --ink: #F2E9DA;
+  --ink-soft: #B7AC99;
+  --ink-mute: #6D6759;
+  --gold: #D8B25E;
+  --gold-ink: #D8B25E;
+  --accent: #E39A6B;
+  --on-accent: #1C2027;
+  --focus: #E9C46A;
+  --line: rgba(242, 233, 218, .08);
+  --line-2: rgba(242, 233, 218, .16);
+  --scrim: 6, 8, 12;
+  --sky-1: #0B0E14;
+  --sky-2: #1A2130;
+  --star: #F3E3BD;
+  --convex: linear-gradient(145deg, rgba(255,255,255,.035), rgba(255,255,255,0) 55%, rgba(0,0,0,.12));
+  --deboss-text: 0 -1px 0 rgba(0,0,0,.6);
+  color-scheme: dark;
+}
+
+/* Declared on every element (not only :root) so each element resolves --d locally. */
+*, *::before, *::after {
+  --raise: calc(var(--d) * -10px) calc(var(--d) * -10px) calc(var(--d) * 22px) var(--hi), calc(var(--d) * 12px) calc(var(--d) * 14px) calc(var(--d) * 28px) var(--lo);
+  --raise-sm: calc(var(--d) * -5px) calc(var(--d) * -5px) calc(var(--d) * 11px) var(--hi), calc(var(--d) * 6px) calc(var(--d) * 7px) calc(var(--d) * 14px) var(--lo);
+  --raise-xs: calc(var(--d) * -2px) calc(var(--d) * -2px) calc(var(--d) * 5px) var(--hi), calc(var(--d) * 3px) calc(var(--d) * 3px) calc(var(--d) * 6px) var(--lo);
+  --press: inset calc(var(--d) * 6px) calc(var(--d) * 7px) calc(var(--d) * 14px) var(--lo), inset calc(var(--d) * -6px) calc(var(--d) * -6px) calc(var(--d) * 13px) var(--hi);
+  --press-sm: inset calc(var(--d) * 3px) calc(var(--d) * 3px) calc(var(--d) * 7px) var(--lo), inset calc(var(--d) * -3px) calc(var(--d) * -3px) calc(var(--d) * 7px) var(--hi);
+  --press-deep: inset calc(var(--d) * 9px) calc(var(--d) * 10px) calc(var(--d) * 20px) var(--lo-deep), inset calc(var(--d) * -8px) calc(var(--d) * -8px) calc(var(--d) * 16px) var(--hi);
+}
+
+:root {
+
+  --f-display: "Readex", "Plex Arabic", system-ui, sans-serif;
+  --f-text: "Plex Arabic", system-ui, sans-serif;
+  --t-xs: 13px; --t-sm: 15px; --t-base: 17px; --t-md: 21px; --t-lg: 27px;
+  --t-xl: 34px; --t-2xl: 44px; --t-3xl: 56px; --t-4xl: 72px;
+  --r-frame: 40px; --r-window: 28px; --r-card: 26px; --r-well: 18px; --r-round: 999px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --sector: var(--accent);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+}

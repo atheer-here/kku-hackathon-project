@@ -1,187 +1,558 @@
+/* Massari app controller: state, views, chrome, keyboard. Answers live in memory only. */
 (function () {
-  const app = document.getElementById("app");
-  const liveStatus = document.getElementById("live-status");
-  const skipLink = document.querySelector(".skip-link");
-  const themeStorageKey = "vision-sector-theme";
-  const languageStorageKey = "massari-language";
-  const supportedLanguages = window.MASSARI_TRANSLATIONS.locales;
-  const analysisTimer = window.MassariAnalysisTimer.createAnalysisTimer();
-  let analysisFrame = null;
-  let introTransition = null;
-  const state = {
-    view: "overview",
-    questionIndex: 0,
-    answers: {},
-    result: null,
-    language: document.documentElement.lang === "ar" ? "ar" : "en",
-    analysis: { deadline: 0 }
+  "use strict";
+  var W = window, H = document.documentElement;
+  var S = W.MASSARI_SECTORS, Q = W.MASSARI_QUESTIONS, I18N = W.MASSARI_I18N, E = W.MassariEngine, IC = W.MassariIcons, SC = W.MassariScenes;
+  var noop = function () { return Promise.resolve(); };
+  var M = W.MassariMotion || { enabled: function () { return false; }, leave: noop, enter: noop, flyToNode: noop, countUp: function (el, to, o) { el.textContent = (o && o.format ? o.format(to) : to); return noop(); },
+    drawRadar: noop, logoReveal: noop, magnetic: function () { return function () {}; }, veil: function () { return { cover: noop(), lift: noop }; }, swapIcon: function (b, h) { b.innerHTML = h; } };
+  var TRAITS = [["people", "traitPeople"], ["ideas", "traitIdeas"], ["data", "traitData"], ["hands", "traitHands"]];
+  var byId = {};
+  S.forEach(function (s) { byId[s.id] = s; });
+
+  var st = { view: "intro", q: 0, answers: {}, result: null, lang: H.lang === "en" ? "en" : "ar", theme: H.getAttribute("data-theme") === "dark" ? "dark" : "light",
+    isExample: false, busy: false, slide: 0, playing: true };
+  var timers = [], canvases = {}, anTl = null, backdrop = null;
+
+  /* ---------- helpers ---------- */
+  function $(id) { return document.getElementById(id); }
+  function qa(sel, el) { return Array.prototype.slice.call((el || document).querySelectorAll(sel)); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function t(k, v) {
+    var s = (I18N[st.lang] && I18N[st.lang][k]) || I18N.en[k] || k;
+    return s.replace(/\{(\w+)\}/g, function (m, n) { return v && v[n] != null ? v[n] : m; });
+  }
+  function tx(o) { return o ? esc(o[st.lang] || o.en) : ""; }
+  function ic(n, cls) { return IC ? IC.svg(n, { className: cls }) : ""; }
+  function pct(n) { return st.lang === "ar" ? n + "٪" : n + "%"; }
+  function accent(s) { return st.theme === "dark" ? s.colorDark : s.color; }
+  function later(fn, ms) { var id = setTimeout(fn, ms); timers.push(id); return id; }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; if (anTl) { anTl.kill(); anTl = null; } }
+  function centre(el) { if (!el) return null; var r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+  function announce(msg) { var l = $("live"); l.textContent = ""; setTimeout(function () { l.textContent = msg; }, 40); }
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode: ignore */ } }
+  function reduced() { try { return W.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; } }
+  function toast(msg) {
+    var el = document.createElement("div"); el.className = "toast"; el.setAttribute("role", "status"); el.textContent = msg;
+    document.body.appendChild(el); setTimeout(function () { el.remove(); }, 2800);
+  }
+  function answerOf(qid) { var q = Q.find(function (x) { return x.id === qid; }); return q && q.answers.find(function (a) { return a.id === st.answers[qid]; }); }
+  function stopCanvases() { Object.keys(canvases).forEach(function (k) { try { canvases[k].stop(); } catch (e) {} }); canvases = {}; }
+  function progressFor(view) { return view === "intro" ? 0 : view === "intermission" ? 0.06 : view === "question" ? (st.q + 1) / 13 : view === "analysis" ? 0.94 : 1; }
+
+  /* ---------- chrome (rendered once, relabelled in place) ---------- */
+  function chrome() {
+    document.title = t("metaTitle");
+    var md = document.querySelector('meta[name="description"]'); if (md) md.setAttribute("content", t("metaDescription"));
+    $("skip").textContent = t("skip");
+    $("home").setAttribute("aria-label", t("homeLabel"));
+    $("langSeg").setAttribute("aria-label", t("langLabel"));
+    qa("#langSeg button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.lang === st.lang)); });
+    placeKnob();
+    $("themeBtn").setAttribute("aria-label", t(st.theme === "dark" ? "themeToLight" : "themeToDark"));
+    $("prev").setAttribute("aria-label", t("navPrev"));
+    $("next").setAttribute("aria-label", st.view === "analysis" ? t("anSkip") : t("navNext"));
+    $("foot").textContent = t("footer");
+    chevrons();
+  }
+  function placeKnob() {
+    var on = document.querySelector('#langSeg button[aria-pressed="true"]'), k = document.querySelector("#langSeg .knob"), seg = $("langSeg");
+    if (!on || !k) return;
+    var r = on.getBoundingClientRect(), p = seg.getBoundingClientRect();
+    var start = H.dir === "rtl" ? p.right - r.right - 1 : r.left - p.left - 1;
+    k.style.insetInlineStart = start + "px"; k.style.width = r.width + "px";
+  }
+  function chevrons() {
+    var p = $("prev"), n = $("next"), v = st.view, answered = v === "question" && !!st.answers[Q[st.q].id];
+    p.setAttribute("aria-disabled", String(v === "intro"));
+    n.hidden = v === "result";
+    n.setAttribute("aria-disabled", String(v === "question" && !answered));
+    n.classList.toggle("ready", answered);
+  }
+
+  function setLang(lang) {
+    if (lang === st.lang) return;
+    st.lang = lang; H.lang = lang; H.dir = lang === "ar" ? "rtl" : "ltr"; store("massari-lang", lang);
+    chrome(); rerender(); announce(t("statusLang"));
+  }
+  function setTheme(theme) {
+    st.theme = theme; H.setAttribute("data-theme", theme); store("massari-theme", theme);
+    M.swapIcon($("themeBtn"), ic(theme === "dark" ? "sun" : "moon"));
+    $("themeBtn").setAttribute("aria-label", t(theme === "dark" ? "themeToLight" : "themeToDark"));
+    if (backdrop) backdrop.setTheme(theme);
+    applySector();
+    Object.keys(canvases).forEach(function (k) { try { canvases[k].setTheme(theme); } catch (e) {} });
+    drawRunner();
+    announce(t("statusTheme"));
+  }
+  function applySector() {
+    var r = st.result;
+    if (r && (st.view === "result" || st.view === "analysis")) H.style.setProperty("--sector", accent(byId[r.winner]));
+    else H.style.removeProperty("--sector");
+    qa("[data-rc]").forEach(function (el) { el.style.setProperty("--rc", accent(byId[el.dataset.rc])); });
+  }
+
+  /* ---------- navigation ---------- */
+  function go(view, o) {
+    o = o || {};
+    if (st.busy) return;
+    st.busy = true;
+    clearTimers();
+    var dir = o.dir || 1, sameQ = view === "question" && st.view === "question";
+    if (view === "question" && o.q != null) st.q = o.q;
+    if (view === "analysis") computeResult();
+    if (backdrop && backdrop.travel) backdrop.travel(dir);
+    if (backdrop && backdrop.setProgress) backdrop.setProgress(progressFor(view));
+    var root = $("view"), unlock = function () { st.busy = false; };
+
+    if (sameQ) { // question -> question: only the body swaps; the crenellation path persists
+      M.leave($("qbody"), { direction: dir, fast: true }).then(function () {
+        st.view = "question"; renderQBody(); updatePath(); chrome();
+        var body = $("qbody");
+        var entered = M.enter(body, { direction: dir, fast: true });
+        focusHeading(); announce(t("statusQuestion", { current: st.q + 1, total: Q.length }));
+        Promise.race([entered, new Promise(function (r) { setTimeout(r, 360); })]).then(unlock);
+      });
+      return;
+    }
+    var veil = M.veil(o.origin, { flood: !!o.flood });
+    if (o.flood) applySector();
+    Promise.all([veil.cover, o.flood ? Promise.resolve() : M.leave(root, { direction: dir })]).then(function () {
+      stopCanvases();
+      root.removeAttribute("aria-busy");
+      st.view = view; H.setAttribute("data-view", view);
+      render(false);
+      W.scrollTo(0, 0);
+      chrome();
+      root.style.opacity = "";
+      veil.lift();
+      var entered = M.enter(root, { direction: dir });
+      mount(false);
+      focusHeading();
+      Promise.race([entered, new Promise(function (r) { setTimeout(r, 700); })]).then(unlock);
+    }).catch(function (e) { console.error(e); unlock(); });
+  }
+  function next(origin) {
+    var v = st.view;
+    if (v === "intro") go("intermission", { origin: origin });
+    else if (v === "intermission") go("question", { q: 0, origin: origin });
+    else if (v === "question") {
+      if (!st.answers[Q[st.q].id]) return;
+      var gap = Q.findIndex(function (x) { return !st.answers[x.id]; });
+      if (st.q < Q.length - 1) go("question", { q: st.q + 1 });
+      else if (gap >= 0) go("question", { q: gap, dir: -1 });
+      else go("analysis", { origin: origin });
+    } else if (v === "analysis") showResult();
+  }
+  function prev(origin) {
+    var v = st.view;
+    if (v === "intermission") go("intro", { dir: -1, origin: origin });
+    else if (v === "question") { if (st.q > 0) go("question", { q: st.q - 1, dir: -1 }); else go("intermission", { dir: -1, origin: origin }); }
+    else if (v === "analysis" || v === "result") go("question", { q: Q.length - 1, dir: -1, origin: origin });
+  }
+  function focusHeading() {
+    var h = document.querySelector("#view h1");
+    if (h) { h.setAttribute("tabindex", "-1"); try { h.focus({ preventScroll: true }); } catch (e) { h.focus(); } }
+  }
+  function computeResult() { st.result = E.score(S, Q, st.answers); return st.result; }
+
+  /* ---------- render ---------- */
+  var VIEWS = {};
+  function render() { $("view").className = "view " + VIEWS[st.view].cls; $("view").innerHTML = VIEWS[st.view].html(); }
+  function mount(instant) { if (VIEWS[st.view].mount) VIEWS[st.view].mount(instant); }
+  function rerender() { // language switch: in place, no leave/enter, keep answers, step and focus
+    var a = document.activeElement, fid = a && a.closest && a.closest("#view") ? (a.id || a.getAttribute("data-fid")) : null;
+    var anTime = anTl ? anTl.time() : null;
+    clearTimers(); stopCanvases();
+    render(); mount(true);
+    if (st.view === "analysis" && anTime != null && anTl) anTl.time(anTime);
+    var back = fid && (document.getElementById(fid) || document.querySelector('[data-fid="' + fid + '"]'));
+    if (back) back.focus({ preventScroll: true });
+  }
+
+  /* intro */
+  VIEWS.intro = {
+    cls: "v-intro",
+    html: function () {
+      var hl = function (s) { return esc(s).replace(/(\d+)/g, '<b data-count="$1">$1</b>'); };
+      return '<div class="medallion" data-m><div class="socket">' + (IC ? IC.logoMark({ className: "hero-mark" }) : "") + "</div></div>" +
+        '<h1 class="display" data-split data-m>' + esc(t("introTitle")) + "</h1>" +
+        '<p class="lead" data-m>' + esc(t("introLead")) + "</p>" +
+        '<ul class="facts" data-m><li>' + hl(t("factQuestions", { n: Q.length })) + "</li><li>" + hl(t("factTime")) + "</li><li>" + hl(t("factSectors", { n: S.length })) + "</li></ul>" +
+        '<button class="btn breathe" type="button" id="start" data-m>' + esc(t("introStart")) + '<span class="well">' + ic("caret-right") + "</span></button>" +
+        '<p class="note" data-m>' + esc(t("introNote")) + "</p>";
+    },
+    mount: function (instant) {
+      $("start").onclick = function (e) { next(centre(e.currentTarget)); };
+      if (instant) return;
+      M.logoReveal(document.querySelector(".hero-mark"));
+      qa(".facts b").forEach(function (b, i) { M.countUp(b, +b.dataset.count, { duration: 1.1, delay: 0.5 + i * 0.12 }); });
+    }
   };
 
-  const sunIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.75"></circle><path d="M12 2.5v2M12 19.5v2M5.28 5.28l1.42 1.42M17.3 17.3l1.42 1.42M2.5 12h2M19.5 12h2M5.28 18.72l1.42-1.42M17.3 6.7l1.42-1.42"></path></svg>';
-  const moonIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 14.3A8.5 8.5 0 0 1 9.7 3.8 8.5 8.5 0 1 0 20.2 14.3Z"></path></svg>';
-  const arrowIcon = '<svg class="direction-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg>';
-  const retryIcon = '<svg class="retry-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.35 5.66M20 5v6h-6"></path></svg>';
-  const downloadIcon = '<svg class="download-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path></svg>';
-  const destinationIcon = '<svg class="destination-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8Z"></path></svg>';
+  /* intermission: the showcase */
+  VIEWS.intermission = {
+    cls: "v-inter",
+    html: function () {
+      var s0 = S[st.slide];
+      return '<div class="show" data-m><div class="frame"><div class="window photo" id="photo" role="region" aria-roledescription="carousel" aria-label="' + esc(t("showEyebrow")) + '">' +
+        S.map(function (s, i) {
+          return '<figure class="slide' + (i === st.slide ? " on" : "") + '" data-i="' + i + '"><img src="' + esc(s.photo.file) + '" alt="' + tx(s.photo.alt) + '" decoding="async"' + (i === st.slide ? ' fetchpriority="high"' : "") + "></figure>";
+        }).join("") +
+        '<div class="caption" id="cap">' + captionHtml(s0) + "</div></div></div>" +
+        '<div class="slide-ctrl"><button class="round" type="button" id="play" aria-label="' + esc(t(st.playing && !reduced() ? "showPause" : "showPlay")) + '">' + ic(st.playing && !reduced() ? "pause" : "play") + "</button>" +
+        '<div class="dots">' + S.map(function (s, i) { return '<button type="button" data-fid="dot' + i + '" data-i="' + i + '" aria-label="' + esc(t("showSlideLabel", { current: i + 1, total: S.length })) + '"' + (i === st.slide ? ' aria-current="true"' : "") + "><span></span></button>"; }).join("") + "</div>" +
+        '<span class="count" id="count">' + esc(t("showSlideLabel", { current: st.slide + 1, total: S.length })) + "</span></div></div>" +
+        '<div class="panel"><h1 class="display" data-split data-m>' + esc(t("showTitle")) + "</h1>" +
+        '<p class="lead" data-m>' + esc(t("showLead")) + "</p>" +
+        '<ol class="beats">' + [["hand-tap", 1], ["waveform", 2], ["path", 3]].map(function (b) {
+          return '<li data-m><span class="pit">' + ic(b[0]) + "<b>" + b[1] + "</b></span><div><h2>" + esc(t("step" + b[1] + "Title")) + "</h2><p>" + esc(t("step" + b[1] + "Text")) + "</p></div></li>";
+        }).join("") + "</ol>" +
+        '<div class="actions" data-m><button class="btn breathe" type="button" id="begin">' + esc(t("showBegin")) + '<span class="well">' + ic("caret-right") + "</span></button>" +
+        '<button class="link" type="button" id="example">' + esc(t("showExample")) + "</button></div></div>";
+    },
+    mount: function () {
+      $("begin").onclick = function (e) { next(centre(e.currentTarget)); };
+      $("example").onclick = function (e) { loadExample(centre(e.currentTarget)); };
+      $("play").onclick = function () { st.playing = !st.playing; syncPlay(); };
+      qa(".dots button").forEach(function (b) { b.onclick = function () { showSlide(+b.dataset.i); }; });
+      if (st.playing && !reduced()) autoplay();
+    }
+  };
+  function captionHtml(s) {
+    return '<p class="name">' + ic(s.icon) + "<span>" + tx(s.name) + '</span></p><p class="tag">' + tx(s.tagline) + '</p><p class="credit">' +
+      esc(t("photoCredit", { author: s.photo.credit.author, license: s.photo.credit.license })) + "</p>";
+  }
+  function autoplay() { later(function () { if (st.view !== "intermission" || !st.playing) return; showSlide((st.slide + 1) % S.length); autoplay(); }, 3600); }
+  function syncPlay() {
+    var b = $("play"), on = st.playing && !reduced();
+    b.setAttribute("aria-label", t(on ? "showPause" : "showPlay")); b.innerHTML = ic(on ? "pause" : "play");
+    timers.forEach(clearTimeout); timers = [];
+    if (on) autoplay();
+  }
+  function showSlide(i) {
+    if (i === st.slide || st.view !== "intermission") return;
+    var fwd = i > st.slide, oldI = st.slide; st.slide = i;
+    var slides = qa("#photo .slide"), nu = slides[i], old = slides[oldI], g = W.gsap;
+    nu.classList.add("on"); nu.style.zIndex = 2; old.style.zIndex = 1;
+    var rtl = H.dir === "rtl", fromEnd = fwd !== rtl; // forward reveals from the inline end
+    var done = function () { old.classList.remove("on"); old.style.zIndex = ""; nu.style.zIndex = ""; nu.style.clipPath = ""; };
+    if (g && M.enabled()) {
+      g.fromTo(nu, { clipPath: fromEnd ? "inset(0 0 0 100%)" : "inset(0 100% 0 0)" }, { clipPath: "inset(0 0 0 0%)", duration: 0.9, ease: "power3.inOut", onComplete: done });
+      g.fromTo(nu.querySelector("img"), { xPercent: fromEnd ? 6 : -6 }, { xPercent: 0, duration: 1.1, ease: "power3.out" });
+      var cap = $("cap");
+      g.to(cap.children, { opacity: 0, y: -8, duration: 0.25, stagger: 0.04, onComplete: function () {
+        cap.innerHTML = captionHtml(S[i]); g.from(cap.children, { opacity: 0, y: 12, duration: 0.5, stagger: 0.07, ease: "power3.out" });
+      } });
+    } else { done(); $("cap").innerHTML = captionHtml(S[i]); }
+    qa(".dots button").forEach(function (b, k) { if (k === i) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); });
+    $("count").textContent = t("showSlideLabel", { current: i + 1, total: S.length });
+  }
+  function loadExample(origin) {
+    var sample = W.MASSARI_SAMPLE && W.MASSARI_SAMPLE.answers;
+    if (!sample) return;
+    st.answers = Object.assign({}, sample); st.isExample = true; st.q = Q.length - 1;
+    go("analysis", { origin: origin });
+  }
 
-  function announce(message) { liveStatus.textContent = message; }
-  function setFocus(selector) { requestAnimationFrame(() => { const element = app.querySelector(selector); if (element) element.focus({ preventScroll: false }); }); }
-  function esc(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
-  function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
-  function currentLanguage() { return state.language; }
-  function copy() { return window.MASSARI_TRANSLATIONS.translations[currentLanguage()]; }
-  function t(key, values) {
-    let text = window.MASSARI_TRANSLATIONS.getPath(copy().ui, key) || window.MASSARI_TRANSLATIONS.getPath(window.MASSARI_TRANSLATIONS.translations.en.ui, key) || key;
-    Object.entries(values || {}).forEach(([name, value]) => { text = text.replaceAll(`{${name}}`, String(value)); });
-    return text;
-  }
-  function formatNumber(value) { return new Intl.NumberFormat(currentLanguage()).format(value); }
-  function localizeSector(sector) { return currentLanguage() === "ar" ? { ...sector, ...copy().sectors[sector.id] } : sector; }
-  function localizeQuestion(question) {
-    if (currentLanguage() !== "ar") return question;
-    const translated = copy().questions[question.id];
-    return { ...question, text: translated.text, answers: question.answers.map((answer) => ({ ...answer, label: translated.answers[answer.id] })) };
-  }
-  function updateDocumentCopy() {
-    const metaDescription = document.querySelector('meta[name="description"]');
-    document.title = copy().meta.title;
-    if (metaDescription) metaDescription.content = copy().meta.description;
-    skipLink.textContent = t("skip");
-  }
-  function setTheme(theme, announceChange) {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    try { localStorage.setItem(themeStorageKey, theme); } catch (error) { /* Appearance still works without storage. */ }
-    if (announceChange) { renderCurrentView(); announce(theme === "dark" ? t("themeDarkSelected") : t("themeLightSelected")); setFocus("#theme-toggle"); }
-  }
-  function setLanguage(language) {
-    if (!supportedLanguages.includes(language) || language === currentLanguage()) return;
-    state.language = language;
-    document.documentElement.dataset.language = language;
-    document.documentElement.lang = language;
-    document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
-    try { localStorage.setItem(languageStorageKey, language); } catch (error) { /* Language still works without storage. */ }
-    updateDocumentCopy(); renderCurrentView(); announce(t("statusLanguage")); setFocus(language === "ar" ? "#language-toggle-ar" : "#language-toggle-en");
-  }
-  function renderLogo() { return `<div class="brand-identity"><span class="brand-mark">${window.MassariVisuals.logo()}</span><div class="brand-copy"><strong lang="ar" dir="rtl">مساري</strong><span aria-hidden="true">|</span><strong>Massari</strong><p class="eyebrow">${esc(t("brandKicker"))}</p></div></div>`; }
-  function renderThemeToggle() {
-    const isDark = currentTheme() === "dark";
-    return `<button class="theme-toggle" id="theme-toggle" type="button" aria-label="${esc(isDark ? t("themeToLight") : t("themeToDark"))}" aria-pressed="${isDark}"><span class="theme-toggle-icon">${isDark ? sunIcon : moonIcon}</span><span class="theme-toggle-label">${esc(isDark ? t("themeLight") : t("themeDark"))}</span></button>`;
-  }
-  function renderLanguageToggle() { return `<div class="language-toggle" role="group" aria-label="${esc(t("languageLabel"))}"><button id="language-toggle-en" type="button" data-language="en" aria-pressed="${currentLanguage() === "en"}" lang="en">English</button><button id="language-toggle-ar" type="button" data-language="ar" aria-pressed="${currentLanguage() === "ar"}" lang="ar" dir="rtl">العربية</button></div>`; }
-  function renderConnections() { return `<svg class="connection-field" viewBox="0 0 1100 760" preserveAspectRatio="none" aria-hidden="true"><path class="connection-line line-a" d="M-30 158C180 61 228 285 415 198s197-193 380-82 158 79 340-75"/><path class="connection-line line-b" d="M-20 600c181-95 267 70 438-18 166-85 173-247 360-154 120 59 183 65 353-6"/><path class="connection-line line-c" d="M110 745c53-167 188-131 286-225 106-102 210-51 281-179"/><g class="connection-node node-teal"><circle cx="415" cy="198" r="7"/><circle cx="415" cy="198" r="15"/></g><g class="connection-node node-blue"><circle cx="778" cy="446" r="7"/><circle cx="778" cy="446" r="15"/></g><g class="connection-node node-gold"><circle cx="916" cy="95" r="7"/><circle cx="916" cy="95" r="15"/></g></svg>`; }
-  function renderLayout(content, className) {
-    app.innerHTML = `${renderConnections()}<div class="backdrop-node backdrop-node-a" aria-hidden="true"></div><div class="backdrop-node backdrop-node-b" aria-hidden="true"></div><section class="quiz-frame ${className || ""}" aria-labelledby="page-title"><header class="brand-row">${renderLogo()}<div class="header-actions">${renderLanguageToggle()}${renderThemeToggle()}</div></header>${content}<footer class="quiz-footer">${esc(t("footer"))}</footer></section>`;
-    app.querySelector("#theme-toggle").addEventListener("click", () => setTheme(currentTheme() === "dark" ? "light" : "dark", true));
-    app.querySelectorAll(".language-toggle button").forEach((button) => button.addEventListener("click", (event) => setLanguage(event.currentTarget.dataset.language)));
-  }
-  function reducedMotion() { return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
-  function clearIntroTransition() { if (introTransition) { window.clearTimeout(introTransition); introTransition = null; } }
-  function stopAnalysisUpdates() { if (analysisFrame) { cancelAnimationFrame(analysisFrame); analysisFrame = null; } }
-  function cancelAnalysis() { stopAnalysisUpdates(); analysisTimer.cancel(); state.analysis.deadline = 0; }
-  function resetQuiz() { cancelAnalysis(); state.questionIndex = 0; state.answers = {}; state.result = null; }
-
-  function renderOverview() {
-    renderLayout(`<section class="intro-screen overview-screen" aria-labelledby="page-title"><div class="intro-copy intro-copy-centered"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>${esc(t("overviewEyebrow"))}</span><h1 id="page-title" tabindex="-1">${esc(t("overviewTitle"))}</h1><p class="lead">${esc(t("overviewLead"))}</p><p class="intro-support"><span aria-hidden="true">✦</span>${esc(t("overviewSupport"))}</p><button class="button button-primary button-wide" id="overview-start" type="button">${esc(t("overviewStart"))}${arrowIcon}</button><p class="intro-disclaimer">${esc(t("overviewDisclaimer"))}</p></div><div class="intro-art overview-art">${window.MassariVisuals.startingPointScene("starting-scene")}</div></section>`, "has-intro");
-    app.querySelector("#overview-start").addEventListener("click", () => {
-      clearIntroTransition();
-      const frame = app.querySelector(".quiz-frame");
-      if (reducedMotion()) { state.view = "path"; renderPath(); setFocus("#page-title"); return; }
-      frame.classList.add("is-leaving-forward");
-      introTransition = window.setTimeout(() => { state.view = "path"; renderPath(); setFocus("#page-title"); introTransition = null; }, 680);
+  /* question */
+  VIEWS.question = {
+    cls: "v-q",
+    html: function () {
+      return '<div class="pathbar" data-m role="progressbar" aria-valuemin="1" aria-valuemax="' + Q.length + '" id="pathbar">' +
+        '<div class="crenwrap"><ol class="crenel" aria-hidden="true">' + Q.map(function (q, i) {
+          return '<li class="node" data-i="' + i + '"><svg class="tri" viewBox="0 0 40 34" preserveAspectRatio="none"><path d="M4 33.2 Q1.6 33.2 2.9 31 L18.2 3.6 Q20 .6 21.8 3.6 L37.1 31 Q38.4 33.2 36 33.2 Z"/></svg>' +
+            '<span class="nico"></span><span class="num">' + (i + 1) + "</span></li>";
+        }).join("") + '</ol><div class="whisper" id="whisper" aria-hidden="true"></div></div>' +
+        '<div class="pathmeta"><span class="theme" id="qtheme"></span><span id="qcount"></span></div></div>' +
+        '<div id="qbody"></div>';
+    },
+    mount: function () { renderQBody(); updatePath(); }
+  };
+  function renderQBody() {
+    var q = Q[st.q], sel = st.answers[q.id];
+    $("qbody").innerHTML = '<fieldset><legend><h1 class="display" data-split data-m>' + tx(q.prompt) + "</h1></legend>" +
+      '<div class="answers">' + q.answers.map(function (a, i) {
+        var on = a.id === sel;
+        return '<label class="card' + (on ? " sel" : "") + '" data-m><input class="sr" type="radio" name="answer" data-fid="ans' + i + '" value="' + a.id + '"' + (on ? " checked" : "") + ">" +
+          '<span class="ico">' + ic(a.icon) + '</span><span class="lbl">' + tx(a.label) + '</span><span class="key" aria-hidden="true">' + (i + 1) + "</span></label>";
+      }).join("") + "</div></fieldset>" +
+      '<p class="hintrow" data-m><span>' + esc(t("qHint")) + '</span><span class="rule"></span><span class="keys" aria-label="' + esc(t("qKeysHint")) + '"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></span></p>';
+    qa("#qbody .card").forEach(function (card, i) {
+      var input = card.querySelector("input");
+      input.addEventListener("change", function () { select(i); });
+      card.addEventListener("click", function (e) { if (input.checked && e.target !== input) select(i, true); });
     });
   }
-  function renderPath() {
-    renderLayout(`<section class="intro-screen path-explanation" aria-labelledby="page-title"><div class="intro-copy intro-copy-centered"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>${esc(t("pathEyebrow"))}</span><h1 id="page-title" tabindex="-1">${esc(t("pathTitle"))}</h1><p class="lead">${esc(t("pathLead"))}</p><p class="path-notice">${esc(t("pathNotice"))}</p><div class="intro-actions"><button class="button button-secondary button-back" id="path-back" type="button">${arrowIcon}${esc(t("pathBack"))}</button><button class="button button-primary" id="path-start" type="button">${esc(t("pathStart"))}${arrowIcon}</button></div></div><div class="intro-art path-art">${window.MassariVisuals.pathScene("path-scene")}</div></section>`, "has-intro");
-    app.querySelector("#path-back").addEventListener("click", () => { state.view = "overview"; renderOverview(); setFocus("#page-title"); });
-    app.querySelector("#path-start").addEventListener("click", () => { resetQuiz(); state.view = "question"; renderQuestion(); announce(t("statusStart", { total: formatNumber(window.QUESTION_DATA.length) })); setFocus("#question-title"); });
+  function updatePath() {
+    var bar = $("pathbar"); if (!bar) return;
+    bar.setAttribute("aria-valuenow", st.q + 1);
+    bar.setAttribute("aria-valuetext", t("qProgress", { current: st.q + 1, total: Q.length }));
+    $("qtheme").textContent = Q[st.q].theme[st.lang];
+    $("qcount").textContent = t("qProgress", { current: st.q + 1, total: Q.length });
+    qa("#pathbar .node").forEach(function (n, i) {
+      var a = answerOf(Q[i].id);
+      n.classList.toggle("done", !!a); n.classList.toggle("now", i === st.q);
+      var nico = n.querySelector(".nico");
+      if (a && nico.dataset.icon !== a.icon) { nico.innerHTML = ic(a.icon); nico.dataset.icon = a.icon; }
+    });
   }
-  function renderQuestion() {
-    const baseQuestion = window.QUESTION_DATA[state.questionIndex];
-    const question = localizeQuestion(baseQuestion);
-    const total = window.QUESTION_DATA.length;
-    const selected = state.answers[baseQuestion.id];
-    const isFinal = state.questionIndex === total - 1;
-    const progress = Math.round(((state.questionIndex + 1) / total) * 100);
-    const answersMarkup = question.answers.map((answer, index) => {
-      const checked = selected === answer.id ? "checked" : "";
-      return `<label class="answer-option ${checked ? "is-selected" : ""}"><input type="radio" name="${esc(baseQuestion.id)}" value="${esc(answer.id)}" ${checked}><span class="answer-index" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><span class="answer-label">${esc(answer.label)}</span><span class="answer-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4.3 4.3L19 6.7"></path></svg></span></label>`;
+  function select(i, again, qWas) {
+    if (st.view !== "question" || (qWas != null && qWas !== st.q)) return;
+    if (st.busy) { var q0 = st.q; setTimeout(function () { select(i, again, q0); }, 120); return; } // retried only while still on the same question
+    var qi = st.q, q = Q[qi], a = q.answers[i], cards = qa("#qbody .card"), card = cards[i];
+    if (!a || !card) return;
+    var changed = st.answers[q.id] !== a.id;
+    st.answers[q.id] = a.id;
+    if (changed) { st.result = null; st.isExample = false; }
+    card.querySelector("input").checked = true;
+    cards.forEach(function (c, k) { c.classList.toggle("sel", k === i); });
+    chevrons();
+    if (changed || !again) {
+      ripple(card);
+      announce(t("statusSelected", { answer: a.label[st.lang] }));
+      whisper(a.whisper[st.lang], qi);
+      var node = qa("#pathbar .node")[qi], nico = node.querySelector(".nico");
+      var land = function () { nico.innerHTML = ic(a.icon); nico.dataset.icon = a.icon; node.classList.add("done"); node.classList.remove("lit"); void node.offsetWidth; node.classList.add("lit"); };
+      if (M.enabled()) { node.classList.remove("done"); M.flyToNode(card.querySelector(".ico"), node).then(land); } else land();
+    }
+    timers.forEach(clearTimeout); timers = [];
+    later(function () { if (st.view === "question" && st.q === qi && !st.busy) next(); }, 650);
+  }
+  function ripple(card) {
+    if (!M.enabled()) return;
+    var r = card.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2.2, s = document.createElement("span");
+    s.className = "ripple"; s.style.cssText = "width:" + d + "px;height:" + d + "px;left:" + (r.width / 2 - d / 2) + "px;top:" + (r.height / 2 - d / 2) + "px";
+    card.appendChild(s); setTimeout(function () { s.remove(); }, 800);
+  }
+  var whisperT = 0;
+  function whisper(text, qi) {
+    var w = $("whisper"), node = qa("#pathbar .node")[qi]; if (!w || !node) return;
+    w.textContent = text;
+    var wrap = w.parentNode.getBoundingClientRect(), r = node.getBoundingClientRect(), half = w.offsetWidth / 2 + 4;
+    var c = H.dir === "rtl" ? wrap.right - (r.left + r.width / 2) : r.left + r.width / 2 - wrap.left;
+    var min = half - Math.max(0, (innerWidth - wrap.width) / 2 - 12);
+    c = Math.max(min, Math.min(wrap.width - min, c));
+    w.style.insetInlineStart = c + "px";
+    w.classList.add("on");
+    clearTimeout(whisperT); whisperT = setTimeout(function () { var x = $("whisper"); if (x) x.classList.remove("on"); }, 1700);
+  }
+
+  /* analysis: the observatory */
+  VIEWS.analysis = {
+    cls: "v-an",
+    html: function () {
+      var r = st.result, rtl = st.lang === "ar", narrow = W.innerWidth < 600, Wd = narrow ? 460 : 1000, lanes = [52, 112, 172, 232];
+      var x0 = narrow ? 34 : 150, span = narrow ? 392 : 800; // phones: no lane labels, tighter columns so the icons stay legible
+      var colX = function (i) { var x = x0 + i * (span / (Q.length - 1)); return rtl ? Wd - x : x; };
+      var rnd = mulberry(7), stars = "";
+      for (var k = 0; k < 90; k++) stars += '<circle class="star" cx="' + (rnd() * Wd).toFixed(1) + '" cy="' + (rnd() * 300).toFixed(1) + '" r="' + (0.4 + rnd() * 1.3).toFixed(2) + '" opacity="' + (0.25 + rnd() * 0.6).toFixed(2) + '"/>';
+      var pts = Q.map(function (q, i) { var a = answerOf(q.id); return { x: colX(i), y: lanes[E.TRAITS.indexOf(a.t)], a: a }; });
+      var laneX = rtl ? Wd - 24 : 24, anchor = rtl ? "end" : "start";
+      var w = byId[r.winner];
+      return '<p class="eyebrow" data-m>' + esc(t("anEyebrow")) + '</p><h1 class="display" data-split data-m>' + esc(t("anTitle")) + "</h1>" +
+        '<div class="sky-frame raised" data-m><div class="sky"><svg id="sky" viewBox="0 0 ' + Wd + ' 300" style="direction:ltr" role="img" aria-label="' + esc(t("anProgressLabel")) + '">' +
+        '<g class="stars">' + stars + "</g>" +
+        TRAITS.map(function (tr, i) { return '<line class="lane" x1="' + (narrow ? 12 : rtl ? 40 : 130) + '" x2="' + (narrow ? Wd - 12 : rtl ? 870 : 960) + '" y1="' + lanes[i] + '" y2="' + lanes[i] + '"/>' + (narrow ? "" : '<text class="lane-l" x="' + laneX + '" y="' + (lanes[i] + 4) + '" text-anchor="' + anchor + '">' + esc(t(tr[1])) + "</text>"); }).join("") +
+        Q.map(function (q, i) { return '<text class="col-n" x="' + colX(i) + '" y="284" text-anchor="middle">' + (i + 1) + "</text>"; }).join("") +
+        '<polyline class="link" id="skyLink" points="' + pts.map(function (p) { return p.x + "," + p.y; }).join(" ") + '"/>' +
+        pts.map(function (p) { return '<g class="pt" transform="translate(' + p.x + " " + p.y + ')"><g class="pti"><circle class="halo" r="24"/><circle r="15"/><svg x="-10" y="-10" width="20" height="20" viewBox="0 0 256 256" fill="currentColor">' + (IC ? IC.svg(p.a.icon).replace(/^<svg[^>]*>|<\/svg>$/g, "") : "") + "</svg></g></g>"; }).join("") +
+        '<g class="winner" transform="translate(' + Wd / 2 + ' 142)"><g id="winG" opacity="0"><circle r="38"/><svg x="-22" y="-22" width="44" height="44" viewBox="0 0 256 256" fill="currentColor">' + (IC ? IC.svg(w.icon).replace(/^<svg[^>]*>|<\/svg>$/g, "") : "") + "</svg></g></g>" +
+        "</svg></div></div>" +
+        '<ol class="an-bars" id="anBars" data-m>' + S.map(function (s) {
+          return '<li data-id="' + s.id + '"><span class="ic">' + ic(s.icon) + '</span><span class="tr"><span class="nm">' + tx(s.name) + '</span><span class="fl"></span></span><span class="pc">' + pct(0) + "</span></li>";
+        }).join("") + "</ol>" +
+        '<p class="an-status" id="anStatus" aria-live="polite">' + esc(t("anStage1")) + "</p>" +
+        '<button class="btn ghost an-skip" type="button" id="anSkip" data-m data-fid="anSkip">' + ic("fast-forward") + esc(t("anSkip")) + "</button>";
+    },
+    mount: function (instant) {
+      $("anSkip").onclick = function () { showResult(); };
+      applySector();
+      $("view").setAttribute("aria-busy", "true");
+      if (!instant) announce(t("statusAnalysis"));
+      runAnalysis();
+    }
+  };
+  function mulberry(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; var x = Math.imul(a ^ (a >>> 15), 1 | a); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; }
+  function stage(n) { var s = $("anStatus"); if (s) s.textContent = t("anStage" + n); }
+  function fillBars(animate) {
+    var r = st.result;
+    qa("#anBars li").forEach(function (li) {
+      var p = r.percents[li.dataset.id], fl = li.querySelector(".tr > span:last-child"), pc = li.querySelector(".pc");
+      fl.style.width = Math.max(3, p) + "%"; if (!animate) pc.textContent = pct(p);
+      else M.countUp(pc, p, { duration: 1, format: function (v) { return pct(Math.round(v)); } });
+    });
+  }
+  function sortBars() {
+    var ol = $("anBars"); if (!ol) return;
+    var state = W.Flip && M.enabled() ? W.Flip.getState(qa("#anBars li")) : null;
+    st.result.ranked.forEach(function (x) { ol.appendChild(ol.querySelector('[data-id="' + x.id + '"]')); });
+    var win = ol.querySelector('[data-id="' + st.result.winner + '"]'); if (win) win.classList.add("win");
+    if (state) W.Flip.from(state, { duration: 0.7, ease: "power3.inOut", stagger: 0.03 });
+  }
+  function runAnalysis() {
+    var g = W.gsap, TOTAL = 5000;
+    if (!g || !M.enabled()) { // plain path: final picture, status lines on a timer
+      fillBars(false); sortBars(); var wg = $("winG"); if (wg) wg.setAttribute("opacity", "1");
+      [2, 3, 4].forEach(function (n, i) { later(function () { stage(n); }, (i + 1) * 1200); });
+      later(showResult, TOTAL);
+      return;
+    }
+    var pts = qa("#sky .pt .pti"), link = $("skyLink"), stars = qa("#sky .star");
+    var tl = g.timeline();
+    tl.from(stars, { opacity: 0, duration: 0.8, stagger: { each: 0.008, from: "random" } }, 0)
+      .from(pts, { scale: 0, opacity: 0, transformOrigin: "50% 50%", duration: 0.5, ease: "back.out(2.2)", stagger: 0.09 }, 0.2)
+      .add(function () { stage(2); }, 1.35)
+      .from(link, W.DrawSVGPlugin ? { drawSVG: "0%", duration: 1.2, ease: "power2.inOut" } : { opacity: 0, duration: 1 }, 1.3)
+      .add(function () { stage(3); fillBars(true); }, 2.4)
+      .add(sortBars, 3.3)
+      .add(function () { stage(4); }, 3.8)
+      .to(qa("#sky .pt"), { attr: { transform: "translate(" + (+$("sky").viewBox.baseVal.width / 2) + " 142)" }, duration: 0.7, ease: "power3.in", stagger: 0.02 }, 3.8)
+      .to(pts, { scale: 0.3, opacity: 0, transformOrigin: "50% 50%", duration: 0.7, ease: "power3.in", stagger: 0.02 }, 3.8)
+      .to(link, { opacity: 0, duration: 0.4 }, 3.8)
+      .fromTo("#winG", { attr: { opacity: 0 }, scale: 0, transformOrigin: "50% 50%" }, { attr: { opacity: 1 }, scale: 1, duration: 0.7, ease: "elastic.out(1, 0.5)" }, 4.35)
+      .add(function () { showResult(); }, TOTAL / 1000);
+    anTl = tl;
+  }
+  function showResult() {
+    if (st.view !== "analysis") return;
+    if (st.busy) { setTimeout(showResult, 150); return; } // queued: Esc / skip pressed mid-transition
+    var w = document.querySelector("#winG circle");
+    if (anTl) { anTl.kill(); anTl = null; }
+    go("result", { origin: centre(w) || centre($("next")), flood: true });
+  }
+
+  /* result */
+  VIEWS.result = {
+    cls: "v-res",
+    html: function () {
+      var r = st.result || computeResult(), w = byId[r.winner], ru = byId[r.runnerUp], p = r.percents[w.id], C = 2 * Math.PI * 70;
+      var why = r.why.map(function (x) {
+        var q = Q.find(function (y) { return y.id === x.questionId; }), a = q.answers.find(function (y) { return y.id === x.answerId; });
+        return '<li data-m><span class="pit">' + ic(a.icon) + "</span><span>" + tx(a.signal) + "</span></li>";
+      }).join("");
+      return '<div class="hero"><div class="media" data-m><div class="frame"><div class="window scene"><canvas id="sceneCv" role="img" aria-label="' + tx(w.name) + '"></canvas></div></div>' +
+        '<div class="dial" role="img" aria-label="' + esc(t("resMatch", { percent: p })) + '"><span class="groove-ring"></span><svg viewBox="0 0 156 156"><circle class="arc" id="arc" cx="78" cy="78" r="70" stroke-dasharray="' + C + '" stroke-dashoffset="' + C + '" data-to="' + (C * (1 - p / 100)) + '"/></svg>' +
+        '<div class="face"><div class="num"><span id="dialNum" data-to="' + p + '">0</span><small>' + (st.lang === "ar" ? "٪" : "%") + '</small></div><div class="cap">' + esc(t("resDialCaption")) + "</div></div></div></div>" +
+        '<div class="who">' + (st.isExample ? '<p class="badge-ex" data-m>' + esc(t("resExampleBadge")) + "</p>" : "") +
+        '<p class="kicker" data-m>' + esc(t("resEyebrow")) + '</p><h1 class="display" data-split data-m>' + tx(w.name) + "</h1>" +
+        '<p class="tag" data-m>' + tx(w.tagline) + '</p><p class="desc" data-m>' + tx(w.description) + "</p></div></div>" +
+        '<div class="band three"><section><h2 data-m>' + esc(t("resWhyTitle")) + '</h2><ul class="why">' + why + "</ul></section>" +
+        '<section><h2 data-m>' + esc(t("resTraitsTitle")) + '</h2><div class="plate" data-m><div class="inner">' + radar(r) + "</div></div></section>" +
+        '<section class="runner" data-rc="' + ru.id + '" style="--rc:' + accent(ru) + '"><h2 data-m>' + esc(t("resRunnerUp")) + '</h2><div class="frame" data-m><div class="window"><canvas id="ruCv" aria-hidden="true"></canvas></div></div>' +
+        '<div class="head" data-m><span class="pit">' + ic(ru.icon) + '</span><div><div class="nm">' + tx(ru.name) + '</div><div class="pc">' + esc(t("resMatch", { percent: r.percents[ru.id] })) + "</div></div></div>" +
+        '<span class="track" data-m><span class="fill" data-w="' + r.percents[ru.id] + '"></span></span><p data-m>' + tx(ru.tagline) + "</p></section></div>" +
+        '<div class="band two"><section><h2 data-m>' + esc(t("resAllTitle")) + '</h2><ul class="bars">' + r.ranked.map(function (x) {
+          var s = byId[x.id];
+          return '<li data-m class="' + (x.id === w.id ? "win" : "") + '"><span class="ic">' + ic(s.icon) + '</span><span class="nm">' + tx(s.name) + '</span>' +
+            '<span class="track"><span class="fill" data-w="' + Math.max(3, x.percent) + '"></span></span><span class="pc" data-to="' + x.percent + '">' + pct(x.percent) + "</span></li>";
+        }).join("") + "</ul></section>" +
+        '<div class="lists"><section><h2 data-m>' + esc(t("resRolesTitle")) + "</h2><ul>" + w.roles.map(function (x) { return "<li data-m>" + tx(x) + "</li>"; }).join("") + "</ul></section>" +
+        '<section><h2 data-m>' + esc(t("resSkillsTitle")) + "</h2><ul>" + w.skills.map(function (x) { return "<li data-m>" + tx(x) + "</li>"; }).join("") + "</ul></section></div></div>" +
+        '<div class="endrow"><div class="actions" data-m><button class="btn" type="button" id="dl" data-fid="dl"><span id="dlLbl">' + esc(t("resDownload")) + '</span><span class="well">' + ic("download-simple") + "</span></button>" +
+        '<button class="btn ghost" type="button" id="edit" data-fid="edit">' + ic("pencil-simple") + esc(t("resEditAnswers")) + "</button>" +
+        '<button class="btn ghost" type="button" id="retake" data-fid="retake">' + ic("arrow-counter-clockwise") + esc(t("resRetake")) + "</button></div>" +
+        '<p class="disc" data-m>' + esc(t("resDisclaimer")) + "</p></div>";
+    },
+    mount: function (instant) {
+      var r = st.result, w = byId[r.winner];
+      applySector();
+      $("view").removeAttribute("aria-busy");
+      try { if (SC) canvases.scene = SC.sector($("sceneCv"), w.id, { theme: st.theme }); } catch (e) { console.error(e); }
+      drawRunner();
+      $("dl").onclick = download;
+      $("edit").onclick = function (e) { go("question", { q: Q.length - 1, dir: -1, origin: centre(e.currentTarget) }); };
+      $("retake").onclick = function (e) { st.answers = {}; st.result = null; st.isExample = false; st.q = 0; st.slide = 0; go("intro", { dir: -1, origin: centre(e.currentTarget) }); };
+      var arc = $("arc"), num = $("dialNum"), fills = qa(".v-res .fill");
+      var finish = function () { arc.style.strokeDashoffset = arc.dataset.to; fills.forEach(function (f) { f.style.width = f.dataset.w + "%"; }); };
+      if (instant || !M.enabled()) { finish(); num.textContent = num.dataset.to; return; }
+      announce(t("statusResult", { sector: w.name[st.lang] }));
+      requestAnimationFrame(function () { requestAnimationFrame(finish); });
+      M.countUp(num, +num.dataset.to, { duration: 1.4, delay: 0.3 });
+      M.drawRadar(document.querySelector(".plate svg"));
+    }
+  };
+  function drawRunner() {
+    var c = $("ruCv"); if (!c || !SC || !st.result) return;
+    try {
+      var dpr = Math.min(2, W.devicePixelRatio || 1); c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
+      SC.drawStatic(c.getContext("2d"), st.result.runnerUp, { theme: st.theme, width: c.width, height: c.height });
+    } catch (e) { console.error(e); }
+  }
+  function radar(r) {
+    var cx = 150, cy = 150, rr = 96, flip = st.lang === "ar" ? -1 : 1;
+    var ang = function (i) { return -Math.PI / 2 + flip * i * Math.PI / 2; };
+    var pt = function (i, rad) { return [(cx + Math.cos(ang(i)) * rad).toFixed(1), (cy + Math.sin(ang(i)) * rad).toFixed(1)]; };
+    var grid = [0.33, 0.66, 1].map(function (k) { return '<polygon class="radar-grid" points="' + TRAITS.map(function (_, i) { return pt(i, rr * k).join(","); }).join(" ") + '"/>'; }).join("");
+    var axes = TRAITS.map(function (_, i) { var p = pt(i, rr); return '<line class="radar-axis" x1="' + cx + '" y1="' + cy + '" x2="' + p[0] + '" y2="' + p[1] + '"/>'; }).join("");
+    var top = Math.max.apply(null, TRAITS.map(function (x) { return r.traitPercents[x[0]]; })) || 1;
+    var vals = TRAITS.map(function (x) { return Math.max(0.06, r.traitPercents[x[0]] / top); }); // ponytail: scaled to the strongest trait so the shape reads; labels show real %
+    var shape = '<polygon class="radar-shape" points="' + vals.map(function (v, i) { return pt(i, rr * v).join(","); }).join(" ") + '"/>' +
+      vals.map(function (v, i) { var p = pt(i, rr * v); return '<circle class="radar-dot" r="4" cx="' + p[0] + '" cy="' + p[1] + '"/>'; }).join("");
+    var labels = TRAITS.map(function (x, i) {
+      var p = pt(i, rr + 30), cos = Math.cos(ang(i)), sin = Math.sin(ang(i));
+      var a = Math.abs(cos) < 0.1 ? "middle" : cos > 0 ? "start" : "end";
+      var lx = a === "start" ? +p[0] - 14 : a === "end" ? +p[0] + 14 : +p[0], dy = sin > 0.5 ? 8 : sin < -0.5 ? -10 : -2;
+      return '<text class="radar-lbl" text-anchor="' + a + '" x="' + lx + '" y="' + (+p[1] + dy) + '">' + esc(t(x[1])) + "</text>" +
+        '<text class="radar-val" text-anchor="' + a + '" x="' + lx + '" y="' + (+p[1] + dy + 16) + '">' + pct(r.traitPercents[x[0]]) + "</text>";
     }).join("");
-    renderLayout(`<div class="quiz-header"><div><p class="eyebrow">${esc(t("questionKicker", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) }))}</p><h1 id="page-title" class="page-title-small">${esc(t("questionTitle"))}</h1></div><p class="question-count"><span class="count-node" aria-hidden="true"></span>${esc(t("questionCount", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) }))}</p></div><div class="progress-track" role="progressbar" aria-label="${esc(t("progressLabel"))}" aria-valuemin="1" aria-valuemax="${total}" aria-valuenow="${state.questionIndex + 1}" aria-valuetext="${esc(t("progressText", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) }))}"><div class="progress-bar" style="--progress:${progress / 100}"></div></div><section class="question-panel" aria-labelledby="question-title"><p class="section-kicker">${esc(t("answerPrompt"))}</p><fieldset><legend id="question-title" tabindex="-1">${esc(question.text)}</legend><div class="answer-list">${answersMarkup}</div></fieldset><div class="nav-row">${state.questionIndex > 0 ? `<button class="button button-secondary button-back" id="back-button" type="button">${arrowIcon}${esc(t("back"))}</button>` : "<span></span>"}<button class="button button-primary" id="next-button" type="button" ${selected ? "" : "disabled"}>${esc(isFinal ? t("seeResult") : t("next"))}${arrowIcon}</button></div></section>`);
-    app.querySelectorAll("input[type=radio]").forEach((input) => input.addEventListener("change", (event) => { state.answers[baseQuestion.id] = event.target.value; app.querySelectorAll(".answer-option").forEach((option) => option.classList.toggle("is-selected", option.contains(event.target))); app.querySelector("#next-button").disabled = false; announce(t("statusAnswer")); }));
-    const backButton = app.querySelector("#back-button");
-    if (backButton) backButton.addEventListener("click", () => { state.questionIndex -= 1; renderQuestion(); announce(t("statusQuestion", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) })); setFocus("#question-title"); });
-    app.querySelector("#next-button").addEventListener("click", () => {
-      if (!state.answers[baseQuestion.id]) return;
-      if (!isFinal) { state.questionIndex += 1; renderQuestion(); announce(t("statusQuestion", { current: formatNumber(state.questionIndex + 1), total: formatNumber(total) })); setFocus("#question-title"); return; }
-      try {
-        state.result = window.QuizEngine.calculateResult(window.SECTOR_DATA, window.QUESTION_DATA, state.answers);
-        state.view = "analysis";
-        state.analysis.deadline = Date.now() + window.MassariAnalysisTimer.DEFAULT_DURATION;
-        renderAnalysis(); announce(t("statusAnalysis")); setFocus("#page-title");
-      } catch (error) { console.error(error); announce(t("errorResult")); }
-    });
+    return '<svg viewBox="0 0 300 300" style="direction:ltr" role="img" aria-label="' + esc(TRAITS.map(function (x) { return t(x[1]) + " " + pct(r.traitPercents[x[0]]); }).join("، ")) + '">' + grid + axes + shape + labels + "</svg>";
   }
-  function analysisStage(progress) { return Math.min(3, Math.floor(progress * 4)); }
-  function completeAnalysis() {
-    if (state.view !== "analysis" || !state.result) return;
-    stopAnalysisUpdates(); state.analysis.deadline = 0; state.view = "result"; renderResult(); announce(t("statusResult", { sector: localizeSector(state.result.winner).name })); setFocus("#page-title");
-  }
-  function updateAnalysisView() {
-    if (state.view !== "analysis") return;
-    const progress = analysisTimer.progress();
-    const current = Math.round(progress * 100);
-    const stage = analysisStage(progress);
-    const bar = app.querySelector("#analysis-progress-bar");
-    const progressbar = app.querySelector("#analysis-progress");
-    const stageText = app.querySelector("#analysis-stage");
-    const route = app.querySelector(".analysis-route-progress");
-    const nodes = app.querySelectorAll(".analysis-node");
-    if (bar) bar.style.setProperty("--analysis-progress", progress);
-    if (route) route.style.setProperty("--analysis-progress", progress);
-    if (progressbar) { progressbar.setAttribute("aria-valuenow", String(current)); progressbar.setAttribute("aria-valuetext", t("analysisProgressText", { current: formatNumber(current) })); }
-    if (stageText) { const text = t(`analysisStage${stage + 1}`); if (stageText.dataset.stage !== String(stage)) { stageText.dataset.stage = String(stage); stageText.textContent = text; if (stage > 0) announce(text); } }
-    nodes.forEach((node, index) => node.classList.toggle("is-lit", index / Math.max(nodes.length - 1, 1) <= progress));
-    if (progress < 1) analysisFrame = requestAnimationFrame(updateAnalysisView);
-  }
-  function renderAnalysis() {
-    const progress = state.analysis.deadline ? Math.max(0, Math.min(1, 1 - Math.max(0, state.analysis.deadline - Date.now()) / window.MassariAnalysisTimer.DEFAULT_DURATION)) : 0;
-    const stage = analysisStage(progress);
-    const scoreMax = Math.max(...Object.values(state.result.scores), 1);
-    const nodes = window.SECTOR_DATA.map((sector, index) => `<span class="analysis-node ${index / 4 <= progress ? "is-lit" : ""}" style="--node-strength:${Math.max(.3, state.result.scores[sector.id] / scoreMax)}"><span class="sr-only">${esc(localizeSector(sector).name)}</span></span>`).join("");
-    renderLayout(`<section class="analysis-screen" aria-labelledby="page-title" aria-busy="true"><div class="analysis-copy"><p class="eyebrow">${esc(t("analysisEyebrow"))}</p><h1 id="page-title" tabindex="-1">${esc(t("analysisTitle"))}</h1><p class="lead">${esc(t("analysisLead"))}</p></div><div class="analysis-visual" aria-hidden="true"><div class="analysis-constellation">${nodes}</div><svg viewBox="0 0 560 210" class="analysis-route" preserveAspectRatio="none"><path class="analysis-route-base" d="M36 164C118 159 124 69 215 88s80 92 154 60c75-32 80-106 153-104"/><path class="analysis-route-progress" d="M36 164C118 159 124 69 215 88s80 92 154 60c75-32 80-106 153-104" style="--analysis-progress:${progress}"/></svg></div><p id="analysis-stage" class="analysis-stage" data-stage="${stage}">${esc(t(`analysisStage${stage + 1}`))}</p><div id="analysis-progress" class="analysis-progress" role="progressbar" aria-label="${esc(t("analysisProgressLabel"))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress * 100)}" aria-valuetext="${esc(t("analysisProgressText", { current: formatNumber(Math.round(progress * 100)) }))}"><div id="analysis-progress-bar" class="analysis-progress-bar" style="--analysis-progress:${progress}"></div></div><button class="button button-secondary analysis-skip" id="analysis-skip" type="button">${esc(t("analysisSkip"))}</button></section>`, "has-analysis");
-    stopAnalysisUpdates();
-    analysisTimer.start(state.analysis.deadline, completeAnalysis);
-    if (analysisTimer.remaining() === 0) { analysisTimer.finish(); return; }
-    analysisFrame = requestAnimationFrame(updateAnalysisView);
-    app.querySelector("#analysis-skip").addEventListener("click", () => { analysisTimer.finish(); });
-  }
-  function renderChart(result) {
-    const maxScore = Math.max(...Object.values(result.scores), 1);
-    return `<section class="score-chart viz-root" aria-labelledby="chart-title"><div class="chart-heading"><div><p class="section-kicker">${esc(t("chartKicker"))}</p><h2 id="chart-title">${esc(t("chartTitle"))}</h2></div><span class="score-key">${esc(t("points"))}</span></div><div class="chart-rows">${window.SECTOR_DATA.map((sector) => { const score = result.scores[sector.id]; const width = Math.max(score > 0 ? 8 : 0, (score / maxScore) * 100); const localized = localizeSector(sector); const isWinner = sector.id === result.winner.id; const winnerContext = isWinner ? ` — ${t("resultTag")}` : ""; return `<div class="chart-row ${isWinner ? "is-winner" : ""}" data-sector="${sector.id}" aria-label="${esc(`${localized.name}: ${formatNumber(score)} ${t("points")}${winnerContext}`)}"><div class="chart-label"><span class="chart-dot"></span><span>${esc(localized.name)}</span>${isWinner ? `<span class="chart-winner-mark" aria-hidden="true">${destinationIcon}</span>` : ""}</div><div class="chart-track" aria-hidden="true"><div class="chart-fill" style="--chart-progress:${width / 100}"></div></div><strong>${formatNumber(score)}<span> ${esc(t("points"))}</span></strong></div>`; }).join("")}</div><p class="chart-summary">${t("chartSummary", { score: formatNumber(result.topScore), sector: esc(localizeSector(result.winner).name) })}</p></section>`;
-  }
-  function renderResult() {
-    const { winner, topScore, tiedSectorIds } = state.result;
-    const localizedWinner = localizeSector(winner);
-    renderLayout(`<div class="result-intro"><span class="mini-tag"><span class="tag-node" aria-hidden="true"></span>${esc(t("resultTag"))}</span><h1 id="page-title" tabindex="-1">${esc(t("resultTitle"))}</h1><p>${esc(t("resultLead"))}</p></div><article class="result-card is-winner" data-sector="${winner.id}"><div class="result-art" aria-hidden="true"><div class="result-ring"></div>${window.MassariVisuals.sectorScene(winner.id, "result-scene")}</div><div class="result-details"><p class="section-kicker">${esc(t("resultKicker"))}</p><h2>${esc(localizedWinner.name)}</h2><p class="result-description">${esc(localizedWinner.description)}</p><div class="result-score"><span>${esc(t("scoreLabel"))}</span><strong>${formatNumber(topScore)}<small> ${esc(t("points"))}</small></strong></div></div><div class="jobs-panel"><p>${esc(t("jobsLabel"))}</p><ul>${localizedWinner.jobs.map((job) => `<li>${esc(job)}</li>`).join("")}</ul></div></article>${tiedSectorIds.length > 1 ? `<p class="tie-note" role="note">${esc(t("tie"))}</p>` : ""}${renderChart(state.result)}<div class="result-actions"><button class="button button-primary" id="download-button" type="button">${esc(t("download"))}${downloadIcon}</button><button class="button button-secondary" id="retry-button" type="button">${esc(t("retry"))}${retryIcon}</button></div><p class="result-disclaimer">${esc(t("resultDisclaimer"))}</p>`);
-    app.querySelector("#retry-button").addEventListener("click", () => { resetQuiz(); state.view = "overview"; renderOverview(); announce(t("statusReset")); setFocus("#page-title"); });
-    app.querySelector("#download-button").addEventListener("click", async (event) => {
-      const button = event.currentTarget; button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = t("downloading");
-      try { await window.downloadResultCard(state.result, { language: currentLanguage(), copy: copy(), sector: localizedWinner }); button.innerHTML = `${esc(t("downloaded"))} <span aria-hidden="true">✓</span>`; announce(t("statusDownloaded")); }
-      catch (error) { console.error(error); button.textContent = t("downloadFailure"); announce(error.message || t("errorDownload")); }
-      setTimeout(() => { button.disabled = false; button.removeAttribute("aria-busy"); button.innerHTML = `${esc(t("download"))}${downloadIcon}`; }, 1600);
-    });
-  }
-  function renderCurrentView() {
-    clearIntroTransition();
-    if (state.view === "question") renderQuestion();
-    else if (state.view === "analysis" && state.result) renderAnalysis();
-    else if (state.view === "result" && state.result) renderResult();
-    else if (state.view === "path") renderPath();
-    else renderOverview();
+  function download() {
+    var btn = $("dl"), lbl = $("dlLbl");
+    if (!W.MassariCard || typeof W.MassariCard.download !== "function") { toast(t("resDownloadFail")); return; }
+    btn.disabled = true; lbl.textContent = t("resDownloading");
+    Promise.resolve().then(function () {
+      return W.MassariCard.download(Object.assign({}, st.result, { isExample: st.isExample }), { lang: st.lang, theme: st.theme, t: t, sectors: S });
+    }).then(function () { toast(t("resDownloaded")); announce(t("resDownloaded")); }, function (e) { console.error(e); toast(t("resDownloadFail")); })
+      .then(function () { var b = $("dl"); if (b) { b.disabled = false; $("dlLbl").textContent = t("resDownload"); } });
   }
 
-  window.QuizEngine.validateData(window.SECTOR_DATA, window.QUESTION_DATA);
-  window.MASSARI_TRANSLATIONS.validateTranslations(window.SECTOR_DATA, window.QUESTION_DATA);
-  updateDocumentCopy(); setTheme(currentTheme()); renderCurrentView();
+  /* ---------- events ---------- */
+  function bind() {
+    $("prev").addEventListener("click", function (e) { if (e.currentTarget.getAttribute("aria-disabled") !== "true") prev(centre(e.currentTarget)); });
+    $("next").addEventListener("click", function (e) { if (e.currentTarget.getAttribute("aria-disabled") !== "true") next(centre(e.currentTarget)); });
+    $("home").addEventListener("click", function (e) { if (st.view !== "intro") go("intro", { dir: -1, origin: centre(e.currentTarget) }); });
+    qa("#langSeg button").forEach(function (b) { b.addEventListener("click", function () { setLang(b.dataset.lang); }); });
+    $("themeBtn").addEventListener("click", function () { setTheme(st.theme === "dark" ? "light" : "dark"); });
+    M.magnetic($("prev")); M.magnetic($("next"));
+    W.addEventListener("resize", placeKnob);
+    document.addEventListener("keydown", function (e) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      var k = e.key, tag = (e.target.tagName || "").toLowerCase();
+      if (k === "ArrowLeft" || k === "ArrowRight") {
+        e.preventDefault();
+        var fwd = (k === "ArrowRight") !== (H.dir === "rtl");
+        if (fwd) { if ($("next").getAttribute("aria-disabled") !== "true" && !$("next").hidden) next(centre($("next"))); }
+        else if ($("prev").getAttribute("aria-disabled") !== "true") prev(centre($("prev")));
+      } else if (st.view === "question" && /^[1-4]$/.test(k)) {
+        e.preventDefault(); var i = +k - 1, inp = qa("#qbody input")[i];
+        if (inp) { inp.focus({ preventScroll: true }); select(i, true); }
+      } else if (k === "Escape" && st.view === "analysis") { e.preventDefault(); showResult(); }
+      else if (k === "Enter" && st.view === "question" && tag === "input") { e.preventDefault(); next(); }
+    });
+  }
+
+  /* ---------- boot ---------- */
+  function boot() {
+    try {
+      if (!S || !Q || !I18N || !E) throw new Error("Massari data failed to load");
+      E.validate(S, Q);
+      $("badgeMark").innerHTML = IC ? IC.logoMark() : "";
+      $("themeBtn").innerHTML = ic(st.theme === "dark" ? "sun" : "moon");
+      $("prev").innerHTML = '<span class="arrow">' + ic("caret-left") + "</span>";
+      $("next").innerHTML = '<span class="arrow">' + ic("caret-right") + "</span>";
+      try { if (SC) backdrop = SC.backdrop($("backdrop"), { theme: st.theme }); } catch (e) { console.error(e); }
+      if (backdrop && backdrop.setProgress) backdrop.setProgress(0);
+      H.setAttribute("data-view", "intro");
+      render(); chrome(); bind();
+      M.enter($("view"), { direction: 1 });
+      mount(false);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(placeKnob);
+    } catch (e) {
+      console.error(e);
+      $("view").innerHTML = '<p class="lead" role="alert" style="padding:40px 0;text-align:center">' + esc(t("errorGeneric")) + "</p>";
+    }
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

@@ -1,46 +1,46 @@
 # مساري | Massari
 
-## What it does
+Massari is a short, bilingual (Arabic first, English) experience that asks 12 everyday scenario questions and shows which Vision 2030 sector may suit you, with an animated result scene and a downloadable result card. It is an independent illustrative tool: it is **not** an official Vision 2030 or government product, and it is **not** career advice.
 
-Massari is a polished, bilingual (Arabic/English) 10-question self-reflection quiz. It suggests one illustrative best-match sector from Tourism, Technology, Health, Finance, or Culture and Entertainment, then shows two example career directions and a score chart.
+## Run
 
-It is inspired by future-focused pathways and opportunity, but it is an **independent illustrative project**. It is not an official Vision 2030, Saudi government, or government-owned product. The sector descriptions, roles, questions, and scores are examples only—not official information, employment advice, or a formal career assessment.
+Double-click `index.html`. It works offline with no install, account or API key.
 
-## Run it locally
+## One-minute demo
 
-A modern web browser is all that is required. No account, server, API key, internet connection, or installation is needed.
+1. Press **Begin**, then **See an example result** to jump straight to a result built from `sample-data/data.js`.
+2. Or answer quickly: keys **1–4** pick an answer, **←/→** move between questions. The whole quiz takes under 2 minutes.
+3. After the last question, **Show result now** skips the 5-second analysis (the demo-speed control).
 
-1. Download or clone this project.
-2. Open `index.html` by double-clicking it.
-3. Choose `العربية` or `English`, move through the two short introduction screens, answer the questions, and view the result.
+## Features
 
-After question 10, Massari shows a six-second illustrative analysis sequence. It does **not** alter or delay the actual score calculation. Use **Show result now / اعرض النتيجة الآن** at any time to skip directly to the same result; this is the built-in demo-speed control.
+- Arabic and English, with gender-neutral Arabic; light (sand) and dark (desert night) themes.
+- Progress path of Najdi crenellation nodes, back/forward chevrons, keyboard control.
+- Constellation-style analysis screen, animated sector scenes and real sector photos.
+- Downloadable result card image, drawn with code.
 
-Answers exist only in the current browser tab. They are not saved or uploaded. The chosen language and light/dark appearance may be remembered in the browser so the interface opens in the same style next time.
+## Privacy
 
-For checks in a terminal with Node.js installed:
+Answers stay in the open browser tab and are never saved or uploaded. Only the chosen language and theme are remembered.
+
+## Where to edit
+
+- `data/sectors.js`: sectors, roles, photos.
+- `data/questions.js`: questions, answers and scores (keep the balance rules noted in the file so no sector is favoured).
+- `data/i18n.js`: interface text in both languages.
+- `css/tokens.css`: colours, shadows and theme tokens.
+- `js/scenes.js`: the animated result scenes.
+
+## Checks (Node.js)
 
 ```sh
-npm test
-npm run check
-npm run build
+npm test        # unit tests
+npm run check   # static project checks (files, links, sizes, names)
+npm run build   # both
 ```
 
-## Edit content and visuals
+## Credits
 
-- **Arabic and English interface text:** edit `data/translations.js`.
-  - The `en.ui` and `ar.ui` sections contain interface, accessibility, download-card, and status text.
-  - Arabic sector/job/question/answer text is keyed by existing stable IDs in `ar.sectors` and `ar.questions`.
-- **English illustrative sectors and score-neutral content:** edit `data/sectors.js`.
-- **English questions and scoring mappings:** edit `data/questions.js`.
-  - Keep sector IDs, question IDs, answer IDs, ordering, and `scores` mappings unchanged if you want to preserve quiz results.
-- **Colors and light/dark theme tokens:** edit the semantic variables at the top of `css/styles.css`.
-- **Original Massari logo, two introduction scenes, and per-sector result visuals:** edit `js/massari-visuals.js`.
-- **Screen flow and the six-second analysis presentation:** edit `js/app.js` and `js/analysis-timer.js`.
-- **PNG result-card layout and canvas styling:** edit `js/download-card.js`.
+Photos, fonts and libraries are listed in [CREDITS.md](CREDITS.md).
 
-The result page includes a local **Download my result / نزّل نتيجتي** action. It creates a PNG in the browser without uploading information.
-
-Built with Claude Code during the KKU Claude Code hackathon
-
-Started on 2026-09-27
+Built with Claude Code during the KKU Claude Code hackathon. Started on 2026-09-27.
