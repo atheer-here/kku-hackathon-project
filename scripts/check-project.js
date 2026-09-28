@@ -29,6 +29,9 @@ if (!html.includes("vision-sector-theme") || !html.includes("massari-language") 
 if (!html.includes('src="data/translations.js"') || !html.includes('src="js/massari-visuals.js"')) throw new Error("Massari localization or visual scripts are not loaded.");
 const appScript = fs.readFileSync(path.join(root, "js/app.js"), "utf8");
 if (!appScript.includes("theme-toggle") || !appScript.includes("language-toggle") || !appScript.includes("aria-pressed")) throw new Error("Accessible theme or language controls are missing from app.js.");
+const visualScript = fs.readFileSync(path.join(root, "js/massari-visuals.js"), "utf8");
+if (!visualScript.includes("journeyScene") || !visualScript.includes("sectorScene") || !visualScript.includes("drawSectorScene") || !visualScript.includes("drawLogo")) throw new Error("Shared Massari SVG and Canvas scene renderers are missing.");
+if (!stylesheet.includes("prefers-reduced-motion") || !stylesheet.includes("--on-strong") || !stylesheet.includes(".chart-row.is-winner")) throw new Error("Massari visual accessibility and winner styling are incomplete.");
 ["data/sectors.js", "data/questions.js", "data/translations.js", "js/quiz-engine.js", "js/massari-visuals.js", "js/download-card.js", "js/app.js"].forEach((file) => {
   const check = spawnSync(process.execPath, ["--check", path.join(root, file)], { encoding: "utf8" });
   if (check.status !== 0) throw new Error(`Syntax error in ${file}: ${check.stderr}`);
