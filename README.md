@@ -1,46 +1,70 @@
 # مساري | Massari
 
-Massari is a short, bilingual (Arabic first, English) experience that asks 12 everyday scenario questions and shows which Vision 2030 sector may suit you, with an animated result scene and a downloadable result card. It is an independent illustrative tool: it is **not** an official Vision 2030 or government product, and it is **not** career advice.
+Massari is an independent illustrative tool, not an official Vision 2030 or government product, and it is not career advice.
 
-## Run
+## What it does
 
-Double-click `index.html`. It works offline with no install, account or API key.
+It takes answers to 12 everyday scenario questions and gives an illustrative Vision 2030 sector-fit result, including a ranked score view and a downloadable result card.
 
-## One-minute demo
+## Who it is for
 
-1. Press **Begin**, then **See an example result** to jump straight to a result built from `sample-data/data.js`.
-2. Or answer quickly: keys **1–4** pick an answer, **←/→** move between questions. The whole quiz takes under 2 minutes.
-3. After the last question, **Show result now** skips the 5-second analysis (the demo-speed control).
+It is for people who want a short, bilingual Arabic/English way to explore which broad sector may match the activities and impact that interest them.
 
-## Features
+## Needs
 
-- Arabic and English, with gender-neutral Arabic; light (sand) and dark (desert night) themes.
-- Progress path of Najdi crenellation nodes, back/forward chevrons, keyboard control.
-- Constellation-style analysis screen, animated sector scenes and real sector photos.
-- Downloadable result card image, drawn with code.
+The app needs nothing but a modern browser. It runs locally, works offline, and does not need an account, API key, database, or internet connection. Node.js is optional and is only needed to run the project checks.
+
+## How to run it
+
+1. Download or clone this repository and open the project folder.
+2. Double-click `index.html` to use the app directly in a browser.
+
+Optional local-server preview from the project folder:
+
+### Windows
+
+```sh
+py -m http.server 8000
+```
+
+Open `http://127.0.0.1:8000/` in a browser.
+
+### Mac
+
+```sh
+python3 -m http.server 8000
+```
+
+Open `http://127.0.0.1:8000/` in a browser.
+
+## Try it with the sample data
+
+1. Select **Begin**.
+2. Select **See an example result**.
+3. The app uses the built-in, made-up answer set in `sample-data/data.js` and shows an illustrative result. No real person's data is included.
+
+## Image/output example
+
+After a result appears, select the download control to create a local PNG result card. The browser saves it as `massari-<sector>-<language>.png` in its usual download location. The card is generated on demand from the illustrative result; it is not uploaded anywhere.
+
+## Timer/skip explanation
+
+After question 12, the analysis screen lasts five seconds. Select **Show result now** to skip it and see the result immediately, so every feature can be demonstrated in under one minute.
 
 ## Privacy
 
-Answers stay in the open browser tab and are never saved or uploaded. Only the chosen language and theme are remembered.
+Answers stay in the open browser tab and are never saved or uploaded. Only the selected language and theme are remembered in the browser.
 
-## Where to edit
-
-- `data/sectors.js`: sectors, roles, photos.
-- `data/questions.js`: questions, answers and scores (keep the balance rules noted in the file so no sector is favoured).
-- `data/i18n.js`: interface text in both languages.
-- `css/tokens.css`: colours, shadows and theme tokens.
-- `js/scenes.js`: the animated result scenes.
-
-## Checks (Node.js)
+## Checks (optional, requires Node.js)
 
 ```sh
-npm test        # unit tests
-npm run check   # static project checks (files, links, sizes, names)
-npm run build   # both
+npm test
+npm run check
+npm run build
 ```
 
 ## Credits
 
-Photos, fonts and libraries are listed in [CREDITS.md](CREDITS.md).
+Photos, fonts, and local libraries are listed in [CREDITS.md](CREDITS.md).
 
-Built with Claude Code during the KKU Claude Code hackathon. Started on 2026-09-27.
+Built with Claude Code during the KKU Claude Code hackathon.
