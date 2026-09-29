@@ -1,5 +1,5 @@
 Name: Atheer Ahmed Ali Alqahtani
-Email (the one I registered with): tota296296@gmail.com
+Email (the one I registered with): [removed before public release]
 Cohort (girls or boys): girls
 Project option: Which Vision 2030 sector suits you?
 Problem: Visitors may not know which broad career sector best matches the activities and impact that interest them.
